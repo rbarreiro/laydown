@@ -1,0 +1,10 @@
+name = "laydown"
+version = "0.1.0"
+defaultTargets = ["laydown"]
+
+[[lean_lib]]
+name = "Laydown"
+
+[[lean_exe]]
+name = "laydown"
+root = "Main"
