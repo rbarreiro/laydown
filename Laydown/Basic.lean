@@ -1,8 +1,14 @@
 
+import Lean.Data.Json
+
+open Lean
+open Json
+
 inductive Ltype where
-  | unit
   | int
   | bool
+  | nat
+  | datetime
   | float
   | string
   | signal (α : Ltype)
@@ -12,9 +18,14 @@ inductive Ltype where
   | record (fs : List (String × Ltype))
   | sum (fs : List (String × Ltype))
   | list (α : Ltype)
-deriving Repr
+  | tuple (fs : List Ltype)
+deriving Repr, ToJson
 
 infixr:10   " ⟶ " => Ltype.func
+
+abbrev unit := Ltype.tuple []
+
+def option (α : Ltype) : Ltype := .sum [("some", α), ("none", unit)]
 
 abbrev Fields := List (String × Ltype)
 
@@ -37,21 +48,25 @@ deriving Repr
 
 abbrev HasVar e n α := HasGenVar e n (GenType.base α)
 
+abbrev toEnv (fs : Fields) : Env :=
+  fs.map (λ (n, t) => (n, GenType.base t))
+
 inductive Lexp : Env → Ltype → Type where
   | litStr : (s : String) → Lexp e Ltype.string
-  | litInt : (n : Int) → Lexp e Ltype.int
+  | litInt : (i : Int) → Lexp e Ltype.int
   | litBool : (b : Bool) → Lexp e Ltype.bool
   | litFloat : (f : Float) → Lexp e Ltype.float
-  | litUnit : Lexp e Ltype.unit
   | var : (n : String) → (p : HasVar e n α) → Lexp e α
   | parametricVar : (n : String) → (α : Ltype) → (p : HasGenVar e n (GenType.parametric g)) → Lexp e (g α)
-  | parametric2Var : (n : String) → (α : Ltype) → (β : Ltype) → (p : HasGenVar e n (GenType.parametric2 g)) → Lexp e (g α β)
+  | parametric2Var : (n : String) → (α : Ltype) → (β : Ltype) →
+                        (p : HasGenVar e n (GenType.parametric2 g)) → Lexp e (g α β)
   | app : Lexp e (α ⟶ β) → Lexp e α → Lexp e β
   | lambda : (n : String) → Lexp ((n, .base α) :: e) β → Lexp e (α ⟶ β)
   | llet : (n : String) → (v : Lexp e α) → (body : Lexp ((n, .base α) :: e) β) -> Lexp e β
+  | mk : (n : String) → Lexp e α → (p : HasField ts n α) → Lexp e (Ltype.sum ts)
   | pureEffect : Lexp e (α ⟶ Ltype.effect α)
   | bindEffect : Lexp e (Ltype.effect α ⟶ (α ⟶ Ltype.effect β) ⟶ Ltype.effect β)
-  | seqEffect : Lexp e (Ltype.effect α ⟶ Ltype.effect β ⟶ Ltype.effect β)
+  | seqEffect : Lexp e (Ltype.effect unit ⟶ Ltype.effect β ⟶ Ltype.effect β)
   | intToString : Lexp e (Ltype.int ⟶ Ltype.string)
   | floatToString : Lexp e (Ltype.float ⟶ Ltype.string)
   | boolToString : Lexp e (Ltype.bool ⟶ Ltype.string)
@@ -64,7 +79,52 @@ inductive Lexp : Env → Ltype → Type where
   | boolOr : Lexp e (Ltype.bool ⟶ Ltype.bool ⟶ Ltype.bool)
   | boolNot : Lexp e (Ltype.bool ⟶ Ltype.bool)
   | boolEq : Lexp e (α ⟶ α ⟶ Ltype.bool)
+  | switchbase : (n : String) → (v : String) → (Lexp ((v, GenType.base α) :: e) β) →
+                    Lexp e (Ltype.sum [(n, α)] ⟶ β)
+  | switchcons : (n : String) → (v : String) → (Lexp ((v, GenType.base α) :: e) β) →
+                    Lexp e (Ltype.sum ts ⟶ β) → Lexp e (Ltype.sum ((n, α)::ts) ⟶ β)
+  | tupleBase : Lexp e (.tuple [])
+  | tupleCons : Lexp e (α ⟶ .tuple ts ⟶ .tuple (α :: ts))
+  | recordnil : Lexp e (Ltype.record [])
+  | recordcons : (n : String) → Lexp e α → Lexp e (Ltype.record ts) → Lexp e (Ltype.record ((n, α) :: ts))
+deriving Repr
 
+def lexpToJson : Lexp e α → Json
+  | Lexp.litStr s => toJson [toJson "litStr", toJson s]
+  | Lexp.litInt i => toJson [toJson "litInt", toJson i]
+  | Lexp.litBool b => toJson [toJson "litBool", toJson b]
+  | Lexp.litFloat f => toJson [toJson "litFloat", toJson f]
+  | Lexp.var n _ => toJson [toJson "var", toJson n]
+  | Lexp.parametricVar n _ _ => toJson [toJson "parametricVar", toJson n]
+  | Lexp.parametric2Var n _ _ _ => toJson [toJson "parametric2Var", toJson n]
+  | Lexp.app f a => toJson [toJson "app", lexpToJson f, lexpToJson a]
+  | Lexp.lambda n b => toJson [toJson "lambda", toJson n, lexpToJson b]
+  | Lexp.llet n v b => toJson [toJson "llet", toJson n, lexpToJson v, lexpToJson b]
+  | Lexp.mk n v _ => toJson [toJson "mk", toJson n, lexpToJson v]
+  | Lexp.pureEffect => toJson [toJson "pureEffect"]
+  | Lexp.bindEffect => toJson [toJson "bindEffect"]
+  | Lexp.seqEffect => toJson [toJson "seqEffect"]
+  | Lexp.intToString => toJson [toJson "intToString"]
+  | Lexp.floatToString => toJson [toJson "floatToString"]
+  | Lexp.boolToString => toJson [toJson "boolToString"]
+  | Lexp.recordGet n r _ => toJson [toJson "recordGet", toJson n, lexpToJson r]
+  | Lexp.listnil => toJson [toJson "listnil"]
+  | Lexp.listcons => toJson [toJson "listcons"]
+  | Lexp.intAdd => toJson [toJson "intAdd"]
+  | Lexp.floatAdd => toJson [toJson "floatAdd"]
+  | Lexp.boolAnd => toJson [toJson "boolAnd"]
+  | Lexp.boolOr => toJson [toJson "boolOr"]
+  | Lexp.boolNot => toJson [toJson "boolNot"]
+  | Lexp.boolEq => toJson [toJson "boolEq"]
+  | Lexp.switchbase n v b => toJson [toJson "switchbase", toJson n, toJson v, lexpToJson b]
+  | Lexp.switchcons n v b c => toJson [toJson "switchcons", toJson n, toJson v, lexpToJson b, lexpToJson c]
+  | Lexp.tupleBase => toJson [toJson "tupleBase"]
+  | Lexp.tupleCons => toJson [toJson "tupleCons"]
+  | Lexp.recordnil => toJson [toJson "recordnil"]
+  | Lexp.recordcons n v r => toJson [toJson "recordcons", toJson n, lexpToJson v, lexpToJson r]
+
+instance : ToJson (Lexp e α) where
+  toJson := lexpToJson
 
 class LHAdd (α : Ltype) (β : Ltype) (γ : Ltype) where
   hadd : Lexp e (α ⟶ β ⟶ γ)
@@ -91,6 +151,9 @@ instance : LToString Ltype.bool where
 
 declare_syntax_cat laydown
 declare_syntax_cat inst_do
+declare_syntax_cat switch_branch
+declare_syntax_cat tuple_item
+declare_syntax_cat key_value
 
 
 syntax str : laydown
@@ -110,6 +173,19 @@ syntax "(" laydown ")" : laydown
 syntax:10 "λ" ident+ "=>" laydown : laydown
 syntax "!sorry" : laydown
 syntax:60 laydown:60 "+" laydown:61 : laydown
+syntax "Mk" "(" ident "," laydown ")" : laydown
+syntax "Mk" "(" ident ")" : laydown
+syntax "Mk" "(" ident "," ident ")" "=>" laydown : switch_branch
+syntax "Mk" "(" ident ")" "=>" laydown : switch_branch
+syntax "match" "{" switch_branch,+  "}" : laydown
+syntax "match" laydown "with" "{" switch_branch,* "}" : laydown
+syntax laydown "," : tuple_item
+syntax "(" tuple_item* ")" : laydown
+syntax "(" tuple_item* laydown "," laydown ")" : laydown
+syntax "[" laydown,* "]" : laydown
+syntax "{" key_value,* "}" : laydown
+syntax ident ":=" laydown : key_value
+
 
 macro_rules
   | `([laydown| !sorry]) => `(sorry)
@@ -120,10 +196,12 @@ macro_rules
   | `([laydown| $f:laydown $a:laydown]) => `(Lexp.app [laydown| $f] [laydown| $a])
   | `([laydown| do {$x:laydown, $xs:inst_do,* }]) => `(
           Lexp.app
-            Lexp.seqEffect
-            ( [laydown| $x]
-              [laydown| do { $xs,* }]
+            (Lexp.app
+              Lexp.seqEffect
+              [laydown| $x]
             )
+            [laydown| do { $xs,* }]
+
         )
   | `([laydown| do {$x:laydown}]) => `([laydown| $x])
   | `([laydown| do { let $n:ident ← $v:laydown, $rest:inst_do,* }]) => `(
@@ -151,7 +229,69 @@ macro_rules
         Lexp.recordGet $(Lean.quote (toString f.getId)) [laydown| $x] (by repeat constructor)
       )
   | `([laydown| $x + $y]) => `([laydown| !LHAdd.hadd $x $y])
+  | `([laydown| Mk($n, $v)]) => `(Lexp.mk $(Lean.quote (toString n.getId)) [laydown| $v] (by repeat constructor))
+  | `([laydown| match { Mk($n, $v) => $b }]) => `(
+        Lexp.switchbase
+          $(Lean.quote (toString n.getId))
+          $(Lean.quote (toString v.getId))
+          [laydown| $b]
+     )
+  | `([laydown| match { Mk($n, $v) => $b, $bs:switch_branch,* }]) => `(
+        Lexp.switchcons
+          $(Lean.quote (toString n.getId))
+          $(Lean.quote (toString v.getId))
+          [laydown| $b]
+          [laydown| match { $bs,* }]
+      )
+  | `([laydown| match $x with { $bs:switch_branch,* }]) => `(
+        [laydown| ( match { $bs,* }) $x]
+      )
+  | `([laydown| Mk($n)]) => `(Lexp.mk $(Lean.quote (toString n.getId)) .tupleBase (by repeat constructor))
+  | `([laydown| match { Mk($n) => $b }]) => `(
+        Lexp.switchbase
+          $(Lean.quote (toString n.getId))
+          "_"
+          [laydown| $b]
+     )
+  | `([laydown| match { Mk($n) => $b, $bs:switch_branch,* }]) => `(
+        Lexp.switchcons
+          $(Lean.quote (toString n.getId))
+          "_"
+          [laydown| $b]
+          [laydown| match { $bs,* }]
+      )
+  | `([laydown| ()]) => `(Lexp.tupleBase)
+  | `([laydown| ($x:laydown , $xs:tuple_item*)]) => `(
+        Lexp.app (Lexp.app Lexp.tupleCons [laydown| $x])  [laydown| ($xs*)]
+      )
+  | `([laydown| []]) => `(Lexp.listnil)
+  | `([laydown| [$x:laydown]]) => `(
+        Lexp.app Lexp.listcons [laydown| $x] [laydown| [] ]
+      )
+  | `([laydown| [$x:laydown, $xs:laydown,*]]) => `(
+        Lexp.app Lexp.listcons [laydown| $x] [laydown| [ $xs,* ]]
+      )
+  | `([laydown| {}]) => `(Lexp.recordnil)
+  | `([laydown| { $n:ident := $v:laydown }]) => `(
+        Lexp.recordcons
+          $(Lean.quote (toString n.getId))
+          [laydown| $v]
+          [laydown| {} ]
+    )
+  | `([laydown| { $n:ident := $v:laydown, $rest:key_value,* }]) => `(
+        Lexp.recordcons
+          $(Lean.quote (toString n.getId))
+          [laydown| $v]
+          [laydown| { $rest,* }]
+      )
 
+def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
+  [laydown|
+    λ defVal => match {
+      Mk(some, v) => v,
+      Mk(none) => defVal
+    }
+  ]
 
 class SubEnv (a : Env) (b : Env) where
   adaptVar : HasGenVar a n α → HasGenVar b n α

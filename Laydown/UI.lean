@@ -2,14 +2,14 @@ import Laydown.Basic
 
 abbrev createSignalTy := λ α =>
   α ⟶ .effect (.record [
-    ("set", α ⟶ .effect .unit),
-    ("update", (α ⟶ α) ⟶ .effect .unit),
+    ("set", α ⟶ .effect unit),
+    ("update", (α ⟶ α) ⟶ .effect unit),
     ("signal", .signal α)
   ])
 
 
 abbrev ui : Env := [
-  ("button", .base (.effect .ui ⟶ .effect .unit ⟶ .effect .ui)),
+  ("button", .base (.effect .ui ⟶ .effect unit ⟶ .effect .ui)),
   ("text", .base (.string ⟶ .effect .ui)),
   ("signalText", .base (.signal .string ⟶ .effect .ui)),
   ("concat", .base (.effect .ui ⟶ .effect .ui ⟶ .effect .ui)),
@@ -20,8 +20,8 @@ abbrev ui : Env := [
 ]
 
 
-def button [se : SubEnv ui e] : Lexp e (.effect .ui ⟶ .effect .unit ⟶ .effect .ui) :=
-  let p : HasVar ui "button" (.effect .ui ⟶ .effect .unit ⟶.effect .ui) := by repeat constructor
+def button [se : SubEnv ui e] : Lexp e (.effect .ui ⟶ .effect unit ⟶ .effect .ui) :=
+  let p : HasVar ui "button" (.effect .ui ⟶ .effect unit ⟶.effect .ui) := by repeat constructor
   Lexp.var "button" (se.adaptVar p)
 
 def text [se : SubEnv ui e] : Lexp e (.string ⟶ .effect .ui) :=

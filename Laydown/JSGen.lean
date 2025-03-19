@@ -20,6 +20,7 @@ def jsRuntime : String :=
     const or = (a) => (b) => a || b;
     const not = (a) => !a;
     const eq = (a) => (b) => a === b;
+    const tupleCons = (a) => (b) => b.unshift(a);
   "
 
 def escapeString (s : String) : String :=
@@ -35,7 +36,6 @@ def jsGen : Lexp e α → String
   | Lexp.litInt n => toString n
   | Lexp.litBool b => toString b
   | Lexp.litFloat f => toString f
-  | Lexp.litUnit => "()"
   | Lexp.var n _ => n
   | Lexp.parametricVar n _ _ => n
   | Lexp.parametric2Var n _ _ _ => n
@@ -57,3 +57,10 @@ def jsGen : Lexp e α → String
   | Lexp.boolOr => "or"
   | Lexp.boolNot => "not"
   | Lexp.boolEq => "eq"
+  | Lexp.mk n v _ => "{" ++ n ++ ": " ++ jsGen v ++ "}"
+  | Lexp.switchbase n v b => s!"(x => ({v} => {jsGen b})(x[{n}]))"
+  | Lexp.switchcons n v b c => s!"(x => x.hasOwnProperty({n}) ? ({v} => {jsGen b})(x[{n}]) : {jsGen c}(x))"
+  | Lexp.tupleBase => "Immutable.List()"
+  | Lexp.tupleCons => "tupleCons"
+  | Lexp.recordnil => "Immutable.Map()"
+  | Lexp.recordcons n v r => s!"{jsGen r}.set({escapeString n}, {jsGen v})"

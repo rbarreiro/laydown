@@ -103,6 +103,7 @@ def writeBrowser [SubEnv ui e] (client : Lexp e (.effect .ui)) (path : String) :
   IO.FS.writeFile path (genBrowser client)
 
 
+/-
 def test2 : Lexp ui (.effect .ui) :=
   [laydown|
     do{
@@ -110,10 +111,11 @@ def test2 : Lexp ui (.effect .ui) :=
       let up := counter#update (λ x => x + 1),
       [ui|
         counter: {counter#signal} <br>
-        b[olae](up)
+        b[{counter#signal}](up)
       ]
     }
   ]
 
 #eval genBrowser test2
 #eval writeBrowser test2 "../test.html"
+-/
