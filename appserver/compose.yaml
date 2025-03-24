@@ -2,7 +2,7 @@ services:
   rethinkdb:
     image: rethinkdb:latest
     volumes:
-      - leware_database:/data
+      - appserver_database:/data
     ports:
       - 6403:8080
     healthcheck:

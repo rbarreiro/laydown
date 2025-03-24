@@ -14,27 +14,28 @@ const services = {};
 
 function exp2query(exp, ctxt){
     switch(exp[0]){
-        case "ldo":
-            return exp2query(exp[1], ctxt);
-        case "doseq":
-            return exp2query(exp[1], ctxt).do(() => exp2query(exp[2], ctxt));
         case "app":
             return exp2query(exp[1], ctxt)(exp2query(exp[2],ctxt));
-        case "lit":
-            return exp2query(exp[1], ctxt);
-        case "str":
-            return r.expr(exp[1]);
-        case "dobase":
-            return exp2query(exp[1], ctxt);
-        case "iopure":
-            return x => x;
-        case "unit":
-            return r.expr(null);
         case "var":
             if(ctxt.has(exp[1]))
                 return ctxt.get(exp[1]);
             else
                 throw "Variable not found: " + exp[1];
+        case "seqEffect":
+            exp2query(exp[1]. ctxt)()
+            return exp2query(exp[2], ctxt)();
+        case "bindEffect":
+            const x = exp2query(exp[1], ctxt)();
+            return exp2query(exp[2], ctxt)(x);
+        case "litStr":  
+            return exp[1]
+        case "pureEffect":
+            return x => () => x;
+        case "tupleBase":
+            return im.List()
+        case "tupleCons":
+            return x => xs => xs.unshift(x);
+        
     }
     throw "Unknown expression: " + exp;
 }
