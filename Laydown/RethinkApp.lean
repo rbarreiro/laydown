@@ -103,7 +103,7 @@ def genStartMigration  (name : String)  (sch : Schema) : Lexp migrationEnv (.eff
     | (n, _, _) :: xs =>
       [laydown|
         do {
-          tableCreate !(Lexp.litStr ("app_" ++ n)) !(Lexp.litStr n),
+          tableCreate !(Lexp.litStr ("app_" ++ name)) !(Lexp.litStr n),
           !(genStartMigration name xs)
         }
       ]
