@@ -12,6 +12,13 @@ const im = require('immutable');
 const pages = {};
 const services = {};
 
+const runtime = im.Map({
+    seqEffect : x => y => () => [x(), y()],
+    bindEffect : x => y => () => x().do(y) ,
+    pureEffect : x => () => x,
+    tubleCons : x => xs => xs.prepend(x),
+})
+
 function exp2query(exp, ctxt){
     switch(exp[0]){
         case "app":
@@ -22,26 +29,25 @@ function exp2query(exp, ctxt){
             else
                 throw "Variable not found: " + exp[1];
         case "seqEffect":
-            exp2query(exp[1]. ctxt)()
-            return exp2query(exp[2], ctxt)();
+            return runtime.get("seqEffect");
         case "bindEffect":
-            const x = exp2query(exp[1], ctxt)();
-            return exp2query(exp[2], ctxt)(x);
+            return runtime.get("bindEffect");
         case "litStr":  
-            return exp[1]
+            return r.expr(exp[1])
         case "pureEffect":
-            return x => () => x;
+            return runtime.get("pureEffect");
         case "tupleBase":
-            return im.List()
+            return r.expr([]);
         case "tupleCons":
-            return x => xs => xs.unshift(x);
+            return runtime.get("tubleCons");
         
     }
     throw "Unknown expression: " + exp;
 }
 
+
 const migrationCtxt = im.Map({
-    tableCreate : db => (table => r.db(db).tableCreate(table)),
+    tableCreate : db => table => () => r.db(db).tableCreate(table),
 });
 
 const dbServiceCtxt = im.Map({
@@ -63,7 +69,7 @@ function runMigrations(conn, appId, migrations, then){
         const queries = [];
         for(let i = 0; i < migrations.length; i++){
             if(doneMigrations.length <= i){
-                queries.push(exp2query(JSON.parse(migrations[i]), migrationCtxt));                
+                queries.push(exp2query(JSON.parse(migrations[i]), migrationCtxt)());                
             }else{
                 if (doneMigrations[i] != migrations[i]){
                     console.log("Migration error: ", appId, ", ", i, " has different migration than expected")
@@ -75,7 +81,8 @@ function runMigrations(conn, appId, migrations, then){
         }
         if(queries.length > 0){
             queries.push(r.db("appserver").table("migration_status").get(appId).replace({id: appId, migrations: migrations}));
-            r.expr(queries).run(conn, (err, res)=>{
+            queries.forEach(q => console.log("q:", q.toString()));
+            r.expr(r.expr(queries)).run(conn, (err, res)=>{
                 if(err) throw err;
                 then();
             });
