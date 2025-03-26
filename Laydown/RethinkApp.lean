@@ -87,7 +87,6 @@ macro_rules
   | `(#server[$r][$z]{$x}) => `(Server.addService (Server.base [$r] $z) $x)
   | `(#server[$r][$z]{$xs:term,*, $x}) => `(Server.addService #server[$r][$z]{$xs,*} $x)
 
-abbrev loginEnv : Env := [("login", .base (.record [("user", .string), ("password", .string)] ⟶ .effect unit))]
 
 abbrev login : Ltype := .sum [
   ("guest", unit),
@@ -153,11 +152,25 @@ def genServices (server : Server roles sch srvs) : List Json :=
     | .base _ _ =>
       []
 
+
+def appName (app : RethinkApp) : String :=
+  match app with
+    | .mk server _ =>
+      match getServerSchema server with
+        | .new name _ => name
+
+def genServerApi (app : RethinkApp) : String :=
+  "const connect = (login) => () => {\n
+    const ws = new WebSocket('/appcomm/"++ appName app ++"');
+    ws.send(JSON.stringify(login));
+  }
+  "
+
 def genApp (app : RethinkApp) : RethinkGeneratedApp :=
   match app with
     | .mk server page =>
         let migs := genMigrations server
-        let client := genBrowser page
+        let client := browserTemplate (genServerApi app) (jsGen page)
         { server := toJson (genServices server) |>.pretty
         , client := client
         , migrations := migs
@@ -166,12 +179,6 @@ def genApp (app : RethinkApp) : RethinkGeneratedApp :=
 
 def escapeforRun (s : String) : String :=
   s.replace "\\\"" "\\\\\""
-
-def appName (app : RethinkApp) : String :=
-  match app with
-    | .mk server _ =>
-      match getServerSchema server with
-        | .new name _ => name
 
 def deployApp (host : String) (port : Nat) (app : RethinkApp) : IO Unit :=
   do

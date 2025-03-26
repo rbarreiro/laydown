@@ -79,7 +79,7 @@ def runtime : String :=
     }
   "
 
-def browserTemplate (client : String) : String :=
+def browserTemplate (extra : String) (client : String) : String :=
   "
   <!DOCTYPE html>
   <html>
@@ -94,7 +94,7 @@ def browserTemplate (client : String) : String :=
             crossorigin=\"anonymous\"
             referrerpolicy=\"no-referrer\">
     </script>
-    <script>" ++ jsRuntime ++ runtime ++ "\n\n" ++
+    <script>" ++ jsRuntime ++ runtime ++ "\n\n" ++ extra ++ "\n" ++
       "const mainNode =" ++ client ++ ";
       document.body.appendChild(mainNode());
     </script>
@@ -102,8 +102,8 @@ def browserTemplate (client : String) : String :=
   </html>
   "
 
-def genBrowser [SubEnv ui e] : Lexp e (.effect .ui) → String :=
-  browserTemplate ∘ jsGen
+def genBrowser [SubEnv ui e]  (x : Lexp e (.effect .ui)) : String :=
+  browserTemplate "" (jsGen x)
 
 def writeBrowser [SubEnv ui e] (client : Lexp e (.effect .ui)) (path : String) : IO Unit :=
   IO.FS.writeFile path (genBrowser client)
