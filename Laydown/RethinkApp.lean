@@ -37,6 +37,7 @@ deriving Repr
 
 inductive AccessPolicy where
   | all
+  | loggedOf
   | roles (list : List String)
 deriving Repr, ToJson
 
@@ -44,7 +45,7 @@ structure ServiceTy where
   name : String
   args : Fields
   res : Ltype
-  roles : AccessPolicy
+  access : AccessPolicy
 deriving Repr, ToJson
 
 
@@ -57,22 +58,50 @@ inductive ServiceDef : Schema → ServiceTy → Type where
                   ServiceDef σ α
 deriving Repr, ToJson
 
-abbrev servicesToEnv (x : List ServiceTy) : Env :=
-  List.map (λ y => (y.name , .base (Ltype.record y.args ⟶ y.res))) x
+abbrev roleHasAccess (role : Option String) (policy : AccessPolicy) : Bool :=
+  match policy with
+    | .all => true
+    | .loggedOf => false
+    | .roles roles =>
+      match role with
+        | .some r => r ∈ roles
+        | .none => false
 
-inductive Server : Schema → List ServiceTy → Type where
-  | base : SchemaDef σ → Server σ []
-  | addService : Server σ l → ServiceDef σ t → Server σ (t :: l)
+
+abbrev roleApi_ (role : Option String) (x : List ServiceTy) : Ltype :=
+  let ty := (λ y => (y.name , Ltype.record y.args ⟶ .effect y.res))
+  Ltype.record ((x.filter (λ z => roleHasAccess role z.access)).map ty)
+
+
+inductive Server : List String → Schema → List ServiceTy → Type where
+  | base : (roles : List String) → SchemaDef σ → Server roles σ []
+  | addService : Server roles σ l → ServiceDef σ t → Server roles σ (t :: l)
 deriving Repr
 
-syntax (priority := high) "#server" "[" term "]" "{" term,* "}" : term
-macro_rules
-  | `(#server[$z]{}) => `(Server.base $z)
-  | `(#server[$z]{$x}) => `(Server.addService (Server.base $z) $x)
-  | `(#server[$z]{$xs:term,*, $x}) => `(Server.addService #server[$z]{$xs,*} $x)
+abbrev roleApi (role : Option String) (x : Server roles schema servs) : Ltype :=
+  roleApi_ role servs
 
-inductive RethinkApp where
-  | mk : Server σ γ → Lexp (servicesToEnv γ ++ ui) (.effect .ui) → RethinkApp
+syntax (priority := high) "#server" "[" term,* "]" "[" term "]" "{" term,* "}" : term
+macro_rules
+  | `(#server[$r][$z]{}) => `(Server.base [$r] $z)
+  | `(#server[$r][$z]{$x}) => `(Server.addService (Server.base [$r] $z) $x)
+  | `(#server[$r][$z]{$xs:term,*, $x}) => `(Server.addService #server[$r][$z]{$xs,*} $x)
+
+abbrev loginEnv : Env := [("login", .base (.record [("user", .string), ("password", .string)] ⟶ .effect unit))]
+
+abbrev login : Ltype := .sum [
+  ("guest", unit),
+  ("user", .record [("user", .string), ("password", .string)])
+]
+
+
+abbrev serverConnection (roles : List String) (services : List ServiceTy) : Env :=
+  let rolesServs := roles.map (λ x => (x, roleApi_ (some x) services))
+  let servs := ("guest", roleApi_ none services) :: rolesServs
+  [("connect", .base (login ⟶ .effect (.sum servs)))]
+
+inductive RethinkApp : Type where
+  | mk : Server r σ γ → Lexp (serverConnection r γ ++ ui) (.effect .ui) → RethinkApp
 
 macro "#rapp" "[" s:term "]" "{" n:term "}" : term => `(RethinkApp.mk $s $n)
 
@@ -84,11 +113,11 @@ structure RethinkGeneratedApp where
 deriving Repr
 
 
-def getServerSchema (server : Server sch srvs) : SchemaDef sch :=
+def getServerSchema (server : Server roles sch srvs) : SchemaDef sch :=
   match server with
     | .addService rest service =>
       getServerSchema rest
-    | .base sch =>
+    | .base roles sch =>
       sch
 
 abbrev migrationEnv : Env :=
@@ -114,14 +143,14 @@ def genMigrations_ (schDef : SchemaDef sch) : List String :=
     | .new name sch =>
       [genStartMigration name sch |> toJson |>.pretty]
 
-def genMigrations (server : Server sch srvs) : List String :=
+def genMigrations (server : Server roles sch srvs) : List String :=
   genMigrations_ (getServerSchema server)
 
-def genServices (server : Server sch srvs) : List Json :=
+def genServices (server : Server roles sch srvs) : List Json :=
   match server with
     | .addService rest service =>
       genServices rest ++ [toJson service]
-    | .base _ =>
+    | .base _ _ =>
       []
 
 def genApp (app : RethinkApp) : RethinkGeneratedApp :=

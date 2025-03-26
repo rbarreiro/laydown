@@ -26,32 +26,58 @@ def schema :=
     )
   ]
 
-def server := #server [schema]{
+def server := #server ["user"] [schema]{
   .dbService
     {
       name := "userMessage",
       args := [("message", .string), ("chatId", .string)],
       res := option .string,
-      roles := .roles ["user", "admin"]
+      access := .roles ["user"]
     }
     (
       [laydown|
         do {
           let n ← now,
           let u ← uuid,
-          let r_ := chatMessage#insertI (chatId, u,) {timestamp := n, content := Mk(userMessage, {text := message})},
+          let r_ ← chatMessage#insertI
+                      (chatId, u,)
+                      {timestamp := n, content := Mk(userMessage, {text := message})},
           return Mk(none)
         }
       ]
     )
 }
 
+def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui) :=
+  [laydown|
+    λ api =>
+      do{
+        let msg ← !createSignal "",
+        let send := do{
+          let m ← msg#get,
+          let _ ← api#userMessage {message := m, chatId := "chat0"},
+          return ()
+        },
+        let change := λ x => do{
+          msg#set x,
+          return ()
+        },
+        [ui|
+          Chat<br>
+          ___(change) b[Send](send)
+        ]
+      }
+  ]
 
 def app := #rapp [server] {
     [laydown|
-      [ui|
-        ola mundo
-      ]
+      do {
+        let s ← connect Mk(user, {user := "user", password := "password"}),
+        match s with{
+          Mk (guest, x) => [ui| Please login ],
+          Mk (user, x) => !chat x
+        }
+      }
     ]
 }
 

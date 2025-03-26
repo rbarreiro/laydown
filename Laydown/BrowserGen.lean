@@ -6,12 +6,12 @@ def runtime : String :=
   "
     const text = txt => () => document.createTextNode(txt);
 
-    const signalText = sig => () => {
+    const signalUI = sig => () => {
       const span = document.createElement('span');
-      span.appendChild(document.createTextNode(sig.get()));
+      span.appendChild(sig.get());
       const i = sig.subscribe(newVal => {
         span.innerHTML = '';
-        span.appendChild(document.createTextNode(newVal));
+        span.appendChild(newVal);
       });
       return span;
     }
@@ -55,7 +55,8 @@ def runtime : String :=
             delete callbacks[i];
           },
           get : () => currentValue
-        }
+        },
+        get : () => currentValue
       });
     }
 
@@ -71,6 +72,11 @@ def runtime : String :=
 
     const currentValue = sig => () => sig.get();
     const br = () => document.createElement('br');
+    const textInput = cb => () => {
+      const input = document.createElement('input');
+      input.addEventListener('input', () => cb(input.value));
+      return input;
+    }
   "
 
 def browserTemplate (client : String) : String :=
@@ -116,6 +122,6 @@ def test2 : Lexp ui (.effect .ui) :=
     }
   ]
 
-#eval genBrowser test2
-#eval writeBrowser test2 "../test.html"
+#eval genBrowser test2-/
+/-#eval writeBrowser test2 "../test.html"
 -/

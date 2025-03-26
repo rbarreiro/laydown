@@ -34,6 +34,15 @@ inductive HasField : List (String × Ltype) → String -> Ltype → Type where
   | there : HasField s name t → HasField (h :: s) name t
 deriving Repr
 
+class HasFieldClass (fs : Fields) (n : String) (t : Ltype) where
+  hasField : HasField fs n t
+
+instance : HasFieldClass ((n, t):: rs) n t where
+  hasField := HasField.here
+
+instance [i : HasFieldClass fs n t] : HasFieldClass (h :: fs) n t where
+  hasField := HasField.there i.hasField
+
 inductive GenType where
   | base : Ltype → GenType
   | parametric : (g: Ltype → Ltype) → GenType
@@ -62,6 +71,7 @@ inductive Lexp : Env → Ltype → Type where
                         (p : HasGenVar e n (GenType.parametric2 g)) → Lexp e (g α β)
   | app : Lexp e (α ⟶ β) → Lexp e α → Lexp e β
   | lambda : (n : String) → Lexp ((n, .base α) :: e) β → Lexp e (α ⟶ β)
+  | lambdaConst : Lexp e β → Lexp e (α ⟶ β)
   | llet : (n : String) → (v : Lexp e α) → (body : Lexp ((n, .base α) :: e) β) -> Lexp e β
   | mk : (n : String) → Lexp e α → (p : HasField ts n α) → Lexp e (Ltype.sum ts)
   | pureEffect : Lexp e (α ⟶ Ltype.effect α)
@@ -99,6 +109,7 @@ def lexpToJson : Lexp e α → Json
   | Lexp.parametric2Var n _ _ _ => toJson [toJson "parametric2Var", toJson n]
   | Lexp.app f a => toJson [toJson "app", lexpToJson f, lexpToJson a]
   | Lexp.lambda n b => toJson [toJson "lambda", toJson n, lexpToJson b]
+  | Lexp.lambdaConst b => toJson [toJson "lambdaConst", lexpToJson b]
   | Lexp.llet n v b => toJson [toJson "llet", toJson n, lexpToJson v, lexpToJson b]
   | Lexp.mk n v _ => toJson [toJson "mk", toJson n, lexpToJson v]
   | Lexp.pureEffect => toJson [toJson "pureEffect"]
@@ -126,6 +137,9 @@ def lexpToJson : Lexp e α → Json
 instance : ToJson (Lexp e α) where
   toJson := lexpToJson
 
+class Has (f : String) (x : Ltype) (t : Ltype) where
+  get : Lexp e (x ⟶ t)
+
 class LHAdd (α : Ltype) (β : Ltype) (γ : Ltype) where
   hadd : Lexp e (α ⟶ β ⟶ γ)
 
@@ -149,6 +163,8 @@ instance : LToString Ltype.float where
 instance : LToString Ltype.bool where
   toString := .boolToString
 
+def the (α : Ltype) : Lexp e (α ⟶ α) := Lexp.lambda "x" (Lexp.var "x" (.here))
+
 declare_syntax_cat laydown
 declare_syntax_cat inst_do
 declare_syntax_cat switch_branch
@@ -166,6 +182,8 @@ syntax "!" "(" term ")" : laydown
 syntax laydown : inst_do
 syntax "let" ident ":=" laydown : inst_do
 syntax "let" ident "←" laydown : inst_do
+syntax "let" "_" "←" laydown : inst_do
+syntax "let" ident ":" term "←" laydown : inst_do
 syntax "do" "{" inst_do,+ "}" : laydown
 syntax "return" laydown : laydown
 syntax "[laydown| " laydown "]" : term
@@ -209,6 +227,24 @@ macro_rules
           (Lexp.app
             Lexp.bindEffect
             [laydown| $v]
+          )
+            (Lexp.lambda $(Lean.quote (toString n.getId)) [laydown| do { $rest,* }])
+
+      )
+  | `([laydown| do { let _ ← $v:laydown, $rest:inst_do,* }]) => `(
+        Lexp.app
+          (Lexp.app
+            Lexp.bindEffect
+            [laydown| $v]
+          )
+            (Lexp.lambdaConst [laydown| do { $rest,* }])
+
+      )
+  | `([laydown| do { let $n:ident : $t:term ← $v:laydown, $rest:inst_do,* }]) => `(
+        Lexp.app
+          (Lexp.app
+            Lexp.bindEffect
+            [laydown| !(the (Ltype.effect $t)) $v]
           )
             (Lexp.lambda $(Lean.quote (toString n.getId)) [laydown| do { $rest,* }])
 
@@ -285,6 +321,7 @@ macro_rules
           [laydown| { $rest,* }]
       )
 
+
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
   [laydown|
     λ defVal => match {
@@ -292,6 +329,9 @@ def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
       Mk(none) => defVal
     }
   ]
+
+instance [c : HasFieldClass fs n α] : Has n (Ltype.record fs) α where
+  get := Lexp.lambda "x" (Lexp.recordGet n (Lexp.var "x" (.here)) c.hasField)
 
 class SubEnv (a : Env) (b : Env) where
   adaptVar : HasGenVar a n α → HasGenVar b n α

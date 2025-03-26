@@ -41,6 +41,7 @@ def jsGen : Lexp e α → String
   | Lexp.parametric2Var n _ _ _ => n
   | Lexp.app f a =>  jsGen f ++ "(" ++ jsGen a ++ ")"
   | Lexp.lambda n b =>  "(" ++ n ++ " => " ++ jsGen b ++ ")"
+  | Lexp.lambdaConst b =>  "(() => " ++ jsGen b ++ ")"
   | Lexp.llet n v b =>  "((" ++ n ++ " => " ++ jsGen b ++ ")(" ++ jsGen v ++ "))"
   | Lexp.pureEffect => "pureEffect"
   | Lexp.bindEffect => "bindEffect"
