@@ -7,9 +7,9 @@ services:
       - 6403:8080
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -sS http://localhost:8080/ > /dev/null"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+      interval: 1s
+      timeout: 1s
+      retries: 20
 
   backend:
     build:
