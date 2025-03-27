@@ -37,7 +37,6 @@ deriving Repr
 
 inductive AccessPolicy where
   | all
-  | loggedOf
   | roles (list : List String)
 deriving Repr, ToJson
 
@@ -56,16 +55,21 @@ inductive ServiceDef : Schema → ServiceTy → Type where
   | dbService : (α : ServiceTy) →
                 Lexp (toEnv α.args ++ toEnv (schemaEnv σ) ++ dbServiceEnv) (.effect α.res) →
                   ServiceDef σ α
-deriving Repr, ToJson
+deriving Repr
 
-abbrev roleHasAccess (role : Option String) (policy : AccessPolicy) : Bool :=
+def serviceDefToJson (s : ServiceDef schema ty) : Json :=
+  match s with
+    | .service _ x => toJson [toJson "service", toJson ty, toJson x]
+    | .dbService _ x => toJson [toJson "dbService", toJson ty, toJson x]
+
+instance : ToJson (ServiceDef schema ty) where
+  toJson := serviceDefToJson
+
+
+abbrev roleHasAccess (role : String) (policy : AccessPolicy) : Bool :=
   match policy with
     | .all => true
-    | .loggedOf => false
-    | .roles roles =>
-      match role with
-        | .some r => r ∈ roles
-        | .none => false
+    | .roles roles => role ∈ roles
 
 
 inductive Server : List String → Schema → List ServiceTy → Type where
@@ -75,10 +79,10 @@ deriving Repr
 
 abbrev serviceSig (y : ServiceTy) :=  (y.name , Ltype.record y.args ⟶ .effect y.res)
 
-abbrev roleApi_ (role : Option String) (x : List ServiceTy) : Ltype :=
+abbrev roleApi_ (role : String) (x : List ServiceTy) : Ltype :=
   Ltype.record ((x.filter (λ z => roleHasAccess role z.access)).map serviceSig)
 
-abbrev roleApi (role : Option String) (x : Server roles schema servs) : Ltype :=
+abbrev roleApi (role : String) (x : Server roles schema servs) : Ltype :=
   roleApi_ role servs
 
 abbrev serviceGroup (names : List String) (_ : Server roles schema services) : Ltype :=
@@ -99,8 +103,8 @@ abbrev login : Ltype := .sum [
 
 
 abbrev serverConnection (roles : List String) (services : List ServiceTy) : Env :=
-  let rolesServs := roles.map (λ x => (x, roleApi_ (some x) services))
-  let servs := ("guest", roleApi_ none services) :: rolesServs
+  let rolesServs := roles.map (λ x => (x, roleApi_ x services))
+  let servs := ("guest", roleApi_ "guest" services) :: rolesServs
   [("connect", .base (login ⟶ (.sum servs ⟶ .effect unit) ⟶ .effect unit))]
 
 inductive RethinkApp : Type where
@@ -110,9 +114,10 @@ macro "#rapp" "[" s:term "]" "{" n:term "}" : term => `(RethinkApp.mk $s $n)
 
 
 structure RethinkGeneratedApp where
-  server : List String
+  server : String
   client : String
   migrations : List String
+  tables : String
 deriving Repr
 
 
@@ -164,19 +169,19 @@ def appName (app : RethinkApp) : String :=
         | .new name _ => name
 
 
-def genClientServicesRole (role : Option String) (services : List ServiceTy) : String :=
+def genClientServicesRole (role : String) (services : List ServiceTy) : String :=
   let filtered := services.filter (λ x => roleHasAccess role x.access)
   let defs := filtered.map (
     λ x =>
-      x.name ++ ": arg => () => {const i = lastReqId++;ws.send(JSON.stringify({" ++
+      x.name ++ ": arg => () => {const i = '' + (lastReqId++);ws.send(JSON.stringify({" ++
       s!"service: {escapeString x.name}, reqId:i, arg: arg" ++
       "}))}"
   )
   "Immutable.Map({" ++ String.intercalate "," defs ++ "})"
 
 def genClientServices_ (_ : Server roles sch srvs) : String :=
-  let roles_ := ("guest" , Option.none) :: roles.map (λ x => (x, .some x))
-  "Immutable.Map({" ++ String.intercalate "," (roles_.map (λ (name, role) => s!"{name}: {genClientServicesRole role srvs}")) ++ "})"
+  let roles_ := "guest" :: roles
+  "Immutable.Map({" ++ String.intercalate "," (roles_.map (λ r => s!"{r}: {genClientServicesRole r srvs}")) ++ "})"
 
 def genClientServices : (app : RethinkApp) → String
   | .mk server _ => genClientServices_ server
@@ -203,14 +208,18 @@ def genServerApi (app : RethinkApp) : String :=
   }
   "
 
+def genTables (_ : Server roles sch srvs) : String :=
+  toJson sch |> pretty
+
 def genApp (app : RethinkApp) : RethinkGeneratedApp :=
   match app with
     | .mk server page =>
         let migs := genMigrations server
         let client := browserTemplate (genServerApi app) (jsGen page)
-        { server := (genServices server).map pretty
+        { server := (genServices server) |> toJson |> pretty
         , client := client
         , migrations := migs
+        , tables := genTables server
         }
 
 
@@ -221,11 +230,12 @@ def deployApp (host : String) (port : Nat) (app : RethinkApp) : IO Unit :=
   do
     let a := genApp app
     let name_ := escapeString (appName app) |> escapeforRun
-    let server_ := "[" ++ String.intercalate "," (a.server.map (λ x => escapeString x |> escapeforRun)) ++ "]"
+    let server_ := escapeString a.server |> escapeforRun
+    let tables_ := escapeString a.tables |> escapeforRun
     let client_ := escapeString a.client |> escapeforRun
     let migrations_ := "[" ++ String.intercalate "," (a.migrations.map (λ x => escapeString x |> escapeforRun)) ++ "]"
     let payload := "{" ++
-                    s!"\"id\" : {name_}, \"server\" : {server_},\"page\" : {client_}, \"migrations\" : {migrations_}" ++
+                    s!"\"id\" : {name_}, \"server\" : {server_},\"page\" : {client_}, \"migrations\" : {migrations_}, \"tables\": {tables_}" ++
                     "}"
     let url := s!"http://{host}:{toString port}/upsertapp"
     let output ← IO.Process.run {

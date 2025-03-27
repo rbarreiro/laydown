@@ -336,11 +336,6 @@ macro_rules
           [laydown| { $rest,* }]
       )
 
-def test : Lexp [] (Ltype.record []) :=
-  let r := Lexp.recordcons "ola" (Lexp.litInt 1) Lexp.recordnil
-  [laydown| !r#(olae)]
-
-
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
   [laydown|
     λ defVal => match {
