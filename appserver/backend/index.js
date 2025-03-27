@@ -7,6 +7,9 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerDocument = require('./swagger.json');
 const r = require('rethinkdb');
 const im = require('immutable');
+const bcrypt = require('bcrypt');
+
+const saltRounds = 10;
 
 
 const pages = {};
@@ -102,11 +105,17 @@ function onAppChanges(conn){
             if (err) throw err;
             cursor.each((err, row)=>{
                 if (err) throw err;
-                r.branch(
-                    r.dbList().contains("app_" + row.new_val.id).not(), 
-                    r.dbCreate("app_" + row.new_val.id),
-                    null
-                ).run(conn, (err, res)=>{
+                r.expr([
+                    r.branch(
+                        r.dbList().contains("app_" + row.new_val.id).not(), 
+                        r.dbCreate("app_" + row.new_val.id),
+                        null
+                    ),r.branch(
+                        r.db("appserver").tableList().contains("users_" + row.new_val.id).not(), 
+                        r.db("appserver").tableCreate("users_" + row.new_val.id),
+                        null
+                    )
+                ]).run(conn, (err, res)=>{
                     if (err) throw err;
                     pages[row.new_val.id] = row.new_val.page;      
                     runMigrations(conn, row.new_val.id, row.new_val.migrations, ()=>{
@@ -176,15 +185,60 @@ app.get('/app/:id', (req, res) => {
 const serviceCallSchema = Joi.object({
     service : Joi.string().required(),
     reqId : Joi.string().required(),
+    arg : Joi.any(),
 }).required();
 
+const loginSchema = Joi.alternatives().try(
+    Joi.object({
+        "user": Joi.object({
+            user : Joi.string().required(),
+            password : Joi.string().required(),
+        }),
+    }),
+    Joi.object({
+        "guest" : Joi.any(),
+    })
+);
+
 app.ws('/appcom/:id', function(ws, req) {
+  let role = null;
   ws.on('message', function(msg) {
-    const { error, value } = serviceCallSchema.validate(JSON.parse(msg));
-    if (error) {
-        console.log(error.details[0].message);
+    if(role === null){
+        const { error, value } = loginSchema.validate(JSON.parse(msg));
+        if (error) {
+            console.log(error);
+        }
+        if(value.user){
+            r.db("appserver").table("users_" + req.params.id).get(value.user.user).run(connection, (err, res)=>{
+                if (err) throw err;
+                if(res){
+                    if(res.hasOwnProperty("password")){
+                        if(res.password === value.user.password){
+                            role = res.role;
+                            ws.send(JSON.stringify({role: role}));
+                        }else{
+                            ws.send(JSON.stringify({error: "Invalid password"}));
+                        }
+                    }else{
+                        bcrypt.compare(value.user.password, res.saltedPassword, function(err, result) {
+                            if(result){
+                                role = res.role;
+                                ws.send(JSON.stringify({role: role}));
+                            }else{
+                                ws.send(JSON.stringify({error: "Invalid password"}));
+                            }
+                        });
+                    }
+                }else{
+                    ws.send(JSON.stringify({error: "Invalid user"}));
+                }
+            });
+        }else{
+            role = "guest";
+            ws.send(JSON.stringify({role: role}));
+        }        
     }else{
-        console.log(value);
+        const { error, value } = serviceCallSchema.validate(JSON.parse(msg));
     }
   });
 });
