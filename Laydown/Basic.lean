@@ -60,6 +60,9 @@ abbrev HasVar e n α := HasGenVar e n (GenType.base α)
 abbrev toEnv (fs : Fields) : Env :=
   fs.map (λ (n, t) => (n, GenType.base t))
 
+abbrev SubrecordFields (names : List String) (fs : Fields) : Fields :=
+  fs.filter (λ (n, _) => n ∈ names)
+
 inductive Lexp : Env → Ltype → Type where
   | litStr : (s : String) → Lexp e Ltype.string
   | litInt : (i : Int) → Lexp e Ltype.int
@@ -97,6 +100,7 @@ inductive Lexp : Env → Ltype → Type where
   | tupleCons : Lexp e (α ⟶ .tuple ts ⟶ .tuple (α :: ts))
   | recordnil : Lexp e (Ltype.record [])
   | recordcons : (n : String) → Lexp e α → Lexp e (Ltype.record ts) → Lexp e (Ltype.record ((n, α) :: ts))
+  | subrecord : (names : List String) → Lexp e (Ltype.record ts) → Lexp e (Ltype.record (SubrecordFields names ts))
 deriving Repr
 
 def lexpToJson : Lexp e α → Json
@@ -133,6 +137,7 @@ def lexpToJson : Lexp e α → Json
   | Lexp.tupleCons => toJson [toJson "tupleCons"]
   | Lexp.recordnil => toJson [toJson "recordnil"]
   | Lexp.recordcons n v r => toJson [toJson "recordcons", toJson n, lexpToJson v, lexpToJson r]
+  | Lexp.subrecord names r => toJson [toJson "subrecord", toJson names, lexpToJson r]
 
 instance : ToJson (Lexp e α) where
   toJson := lexpToJson
@@ -175,6 +180,7 @@ declare_syntax_cat key_value
 syntax str : laydown
 syntax num : laydown
 syntax laydown "#" ident : laydown
+syntax laydown "#" "(" ident,* ")" : laydown
 syntax ident : laydown
 syntax:100 laydown:100 laydown:101 : laydown
 syntax "!" ident : laydown
@@ -203,6 +209,12 @@ syntax "(" tuple_item* laydown "," laydown ")" : laydown
 syntax "[" laydown,* "]" : laydown
 syntax "{" key_value,* "}" : laydown
 syntax ident ":=" laydown : key_value
+
+syntax "[identList|" ident,* "]" : term
+macro_rules
+  | `([identList| ]) => `([])
+  | `([identList| $x:ident]) => `([$(Lean.quote (toString x.getId))])
+  | `([identList| $x:ident, $xs:ident,* ]) => `($(Lean.quote (toString x.getId)) :: [identList| $xs,*])
 
 
 macro_rules
@@ -264,6 +276,9 @@ macro_rules
   | `([laydown| $x:laydown#$f:ident]) => `(
         Lexp.recordGet $(Lean.quote (toString f.getId)) [laydown| $x] (by repeat constructor)
       )
+  | `([laydown| $x:laydown#($fs:ident,*)]) => `(
+        Lexp.subrecord [identList| $fs,* ] [laydown| $x]
+      )
   | `([laydown| $x + $y]) => `([laydown| !LHAdd.hadd $x $y])
   | `([laydown| Mk($n, $v)]) => `(Lexp.mk $(Lean.quote (toString n.getId)) [laydown| $v] (by repeat constructor))
   | `([laydown| match { Mk($n, $v) => $b }]) => `(
@@ -320,6 +335,10 @@ macro_rules
           [laydown| $v]
           [laydown| { $rest,* }]
       )
+
+def test : Lexp [] (Ltype.record []) :=
+  let r := Lexp.recordcons "ola" (Lexp.litInt 1) Lexp.recordnil
+  [laydown| !r#(olae)]
 
 
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=

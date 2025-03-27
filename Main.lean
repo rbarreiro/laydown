@@ -26,13 +26,13 @@ def schema :=
     )
   ]
 
-def server := #server ["user"] [schema]{
+def server := #server ["user", "admin"] [schema]{
   .dbService
     {
       name := "userMessage",
       args := [("message", .string), ("chatId", .string)],
       res := option .string,
-      access := .roles ["user"]
+      access := .roles ["user", "admin"]
     }
     (
       [laydown|
@@ -47,8 +47,7 @@ def server := #server ["user"] [schema]{
       ]
     )
 }
-
-def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui) :=
+def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage"] server) ⟶ .effect .ui) :=
   [laydown|
     λ api =>
       do{
@@ -58,13 +57,9 @@ def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui)
           let _ ← api#userMessage {message := m, chatId := "chat0"},
           return ()
         },
-        let change := λ x => do{
-          msg#set x,
-          return ()
-        },
         [ui|
           Chat<br>
-          ___(change) b[Send](send)
+          ___(msg#set) b[Send](send)
         ]
       }
   ]
@@ -72,18 +67,22 @@ def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui)
 def app := #rapp [server] {
     [laydown|
       do {
-        let s ← connect Mk(user, {user := "user", password := "password"}),
-        match s with{
-          Mk (guest, x) => [ui| Please login ],
-          Mk (user, x) => !chat x
-        }
+        let mainPage ← !createSignal [ui| connecting to ws],
+        connect
+          Mk(user, {user := "admin", password := "1234"})
+          (match{
+            Mk (guest, api) => mainPage#set [ui| guest ],
+            Mk (user, api) => mainPage#set (!chat api#(userMessage)),
+            Mk (admin, api) => mainPage#set (!chat api#(userMessage))
+          }),
+        [ui| {mainPage#signal}]
       }
     ]
 }
 
 
 #eval genApp app
---#eval deployApp "localhost" 6401 app
+#eval deployApp "localhost" 6401 app
 
 --def main : IO Unit :=
 --  IO.println s!"Hello, !"
