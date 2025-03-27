@@ -17,9 +17,9 @@ const services = {};
 
 const runtime = im.Map({
     seqEffect : x => y => () => [x(), y()],
-    bindEffect : x => y => () => x().do(y) ,
+    bindEffect : x => y => () => x().do((z => y(z)())) ,
     pureEffect : x => () => x,
-    tubleCons : x => xs => xs.prepend(x),
+    tubleCons : x => xs => xs.prepend(x)
 })
 
 function exp2query(exp, ctxt){
@@ -30,6 +30,7 @@ function exp2query(exp, ctxt){
             if(ctxt.has(exp[1]))
                 return ctxt.get(exp[1]);
             else
+                console.log(ctxt.toJS());
                 throw "Variable not found: " + exp[1];
         case "seqEffect":
             return runtime.get("seqEffect");
@@ -43,6 +44,16 @@ function exp2query(exp, ctxt){
             return r.expr([]);
         case "tupleCons":
             return runtime.get("tubleCons");
+        case "lambda":
+            return x => exp2query(exp[2], ctxt.set(exp[1], x));
+        case "recordGet":
+            return exp2query(exp[2], ctxt).get(exp[1]);
+        case "recordcons":
+            return exp2query(exp[3],ctxt).merge(r.object(exp[1], exp2query(exp[2], ctxt)));
+        case "recordnil":
+            return r.expr({});
+        case "mk":
+            return r.object(exp[1], exp2query(exp[2], ctxt));
         
     }
     throw "Unknown expression: " + exp;
@@ -54,6 +65,8 @@ const migrationCtxt = im.Map({
 });
 
 const dbServiceCtxt = im.Map({
+    now : () => r.now(),
+    uuid : () => r.uuid()
 });
 
 function runMigrations(conn, appId, migrations, then){
@@ -96,6 +109,24 @@ function runMigrations(conn, appId, migrations, then){
     });
 }
 
+function addTablesToContext(appId, tables, ctxt){
+    tables.forEach(t => {
+        ctxt = ctxt.set(
+            t[0], 
+            im.Map({
+                insertI: i => v => () => r.db("app_" + appId).table(t[0]).insert({id: i, value: v}),     
+    }       )
+        );
+    });
+    return ctxt;
+}
+
+function addArgToCtxt(x, ctxt){
+    for (const key of Object.keys(x)) {
+        ctxt = ctxt.set(key, r.expr(x[key]));
+    }
+    return ctxt
+}
 
 function onAppChanges(conn){
     r.expr([r.db("appserver").table("apps").wait(), r.db("appserver").table("migration_status").wait()]).run(conn, (err, res)=>{
@@ -117,8 +148,21 @@ function onAppChanges(conn){
                     )
                 ]).run(conn, (err, res)=>{
                     if (err) throw err;
-                    pages[row.new_val.id] = row.new_val.page;      
-                    runMigrations(conn, row.new_val.id, row.new_val.migrations, ()=>{
+                    pages[row.new_val.id] = row.new_val.page;
+                    const appId = row.new_val.id; 
+                    runMigrations(conn, appId, row.new_val.migrations, ()=>{
+                        const server = JSON.parse(row.new_val.server);
+                        const tables  = JSON.parse(row.new_val.tables);
+                        const ctxt = addTablesToContext(appId, tables, dbServiceCtxt);
+                        services[row.new_val.id] = {}
+                        server.forEach(srv => {
+                            if(srv[0] === "dbService"){
+                                services[row.new_val.id][srv[1].name] ={
+                                    access : srv[1].access,
+                                    query : x => exp2query(srv[2], addArgToCtxt(x, ctxt)),
+                                }
+                            }
+                        })
                         console.log("launching server for ", row.new_val.id)
                     });
                 });
@@ -163,6 +207,7 @@ const newappSchema = Joi.object({
     page : Joi.string().required(),
     server : Joi.string().required(),
     migrations : Joi.array().items(Joi.string()).required(),
+    tables : Joi.string().required(),
 }).required();
 
 app.post('/upsertapp', (req, res) => {
@@ -239,6 +284,21 @@ app.ws('/appcom/:id', function(ws, req) {
         }        
     }else{
         const { error, value } = serviceCallSchema.validate(JSON.parse(msg));
+        if (error) {
+            console.log(error);
+            return;
+        }
+
+        const s = services[req.params.id][value.service];
+        if(s.access.hasOwnProperty('all') || s.access.roles.list.includes(role)){
+            const q = s.query(value.arg)();
+            q.run(connection, (err, res)=>{
+                if (err) throw err;
+                ws.send(JSON.stringify({reqId: value.reqId, result: res}));
+            });
+        }else{
+            ws.send(JSON.stringify({reqId: value.reqId, error: "Unauthorized"}));
+        }
     }
   });
 });
