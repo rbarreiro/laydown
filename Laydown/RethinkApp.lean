@@ -68,18 +68,25 @@ abbrev roleHasAccess (role : Option String) (policy : AccessPolicy) : Bool :=
         | .none => false
 
 
-abbrev roleApi_ (role : Option String) (x : List ServiceTy) : Ltype :=
-  let ty := (λ y => (y.name , Ltype.record y.args ⟶ .effect y.res))
-  Ltype.record ((x.filter (λ z => roleHasAccess role z.access)).map ty)
-
 
 inductive Server : List String → Schema → List ServiceTy → Type where
   | base : (roles : List String) → SchemaDef σ → Server roles σ []
   | addService : Server roles σ l → ServiceDef σ t → Server roles σ (t :: l)
 deriving Repr
 
+abbrev serviceSig (y : ServiceTy) :=  (y.name , Ltype.record y.args ⟶ .effect y.res)
+
+abbrev roleApi_ (role : Option String) (x : List ServiceTy) : Ltype :=
+  Ltype.record ((x.filter (λ z => roleHasAccess role z.access)).map serviceSig)
+
 abbrev roleApi (role : Option String) (x : Server roles schema servs) : Ltype :=
   roleApi_ role servs
+
+abbrev serviceGroup (names : List String) (server : Server roles schema services) : Ltype :=
+  .record (SubrecordFields names (services.map serviceSig))
+
+--    (services.filter (λ x => x.name ∈ names)).map (λ x => (x.name, Ltype.record x.args ⟶ .effect x.res))
+
 
 syntax (priority := high) "#server" "[" term,* "]" "[" term "]" "{" term,* "}" : term
 macro_rules
@@ -97,7 +104,7 @@ abbrev login : Ltype := .sum [
 abbrev serverConnection (roles : List String) (services : List ServiceTy) : Env :=
   let rolesServs := roles.map (λ x => (x, roleApi_ (some x) services))
   let servs := ("guest", roleApi_ none services) :: rolesServs
-  [("connect", .base (login ⟶ .effect (.sum servs)))]
+  [("connect", .base (login ⟶ (.sum servs ⟶ .effect unit) ⟶ .effect unit))]
 
 inductive RethinkApp : Type where
   | mk : Server r σ γ → Lexp (serverConnection r γ ++ ui) (.effect .ui) → RethinkApp
@@ -160,9 +167,11 @@ def appName (app : RethinkApp) : String :=
         | .new name _ => name
 
 def genServerApi (app : RethinkApp) : String :=
-  "const connect = (login) => () => {\n
-    const ws = new WebSocket('/appcomm/"++ appName app ++"');
-    ws.send(JSON.stringify(login));
+  "const connect = (login) => (cb) => () => {\n
+    const ws = new WebSocket('/appcom/"++ appName app ++"');
+    ws.onopen = event =>{
+      ws.send(JSON.stringify(login));
+    }
   }
   "
 

@@ -47,8 +47,7 @@ def server := #server ["user"] [schema]{
       ]
     )
 }
-
-def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui) :=
+def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage"] server) ⟶ .effect .ui) :=
   [laydown|
     λ api =>
       do{
@@ -72,14 +71,24 @@ def chat [SubEnv ui e] : Lexp e ((roleApi (some "user") server) ⟶ .effect .ui)
 def app := #rapp [server] {
     [laydown|
       do {
-        let s ← connect Mk(user, {user := "user", password := "password"}),
+        let mainPage ← !createSignal [ui| connecting to ws],
+        connect
+          Mk(user, {user := "user", password := "password"})
+          (match{
+            Mk (guest, gapi) => mainPage#set [ui| guest ],
+            Mk (user, uapi) => mainPage#set (!chat uapi#(userMessage))
+          }),
+        [ui| {mainPage#signal}]
+      }
+    ]
+}
+
+/-
         match s with{
           Mk (guest, x) => [ui| Please login ],
           Mk (user, x) => !chat x
         }
-      }
-    ]
-}
+-/
 
 
 #eval genApp app

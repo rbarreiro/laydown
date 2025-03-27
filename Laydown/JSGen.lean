@@ -7,7 +7,7 @@ def jsRuntime : String :=
     const bindEffect = (a) => (f) => f(a());
     const seqEffect = (a) => (b) => () => {
       a();
-      b();
+      return b();
     }
 
     const intToString = (a) => a.toString();
@@ -65,3 +65,6 @@ def jsGen : Lexp e α → String
   | Lexp.tupleCons => "tupleCons"
   | Lexp.recordnil => "Immutable.Map()"
   | Lexp.recordcons n v r => s!"{jsGen r}.set({escapeString n}, {jsGen v})"
+  | Lexp.subrecord names r =>
+      let names_ := String.intercalate "," (names.map escapeString)
+      s!"{jsGen r}.filter((v,k) => {names_}.includes(k))"

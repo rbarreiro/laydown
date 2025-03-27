@@ -8,10 +8,10 @@ def runtime : String :=
 
     const signalUI = sig => () => {
       const span = document.createElement('span');
-      span.appendChild(sig.get());
+      span.appendChild(sig.get()());
       const i = sig.subscribe(newVal => {
         span.innerHTML = '';
-        span.appendChild(newVal);
+        span.appendChild(newVal());
       });
       return span;
     }
