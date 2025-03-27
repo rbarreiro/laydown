@@ -17,6 +17,7 @@ def runtime : String :=
     }
 
     const button = label => click => () => {
+      console.log('click',click);
       const b = document.createElement('button');
       b.appendChild(label());
       b.addEventListener('click', click);
@@ -36,7 +37,7 @@ def runtime : String :=
       let currentValue = init;
       let callbacks = {};
       return Immutable.Map({
-        set : (newVal) => {
+        set : (newVal) => () => {
           currentValue = newVal;
           Object.values(callbacks).forEach(cb => cb(currentValue));
         },
@@ -74,7 +75,7 @@ def runtime : String :=
     const br = () => document.createElement('br');
     const textInput = cb => () => {
       const input = document.createElement('input');
-      input.addEventListener('input', () => cb(input.value));
+      input.addEventListener('input', () => cb(input.value)());
       return input;
     }
   "
@@ -89,11 +90,7 @@ def browserTemplate (extra : String) (client : String) : String :=
   </head>
   <body>
     <div id=\"root\"></div>
-    <script src=\"https://cdnjs.cloudflare.com/ajax/libs/immutable/5.0.3/immutable.min.js\"
-            integrity=\"sha512-7gKzXmjcoHpm+sl09bSCRqlj8XlxpyNhjny1jur6yyqQ6Tiw6q/loRThw10PcTYnjiWeNJZOpshsbCSJT9TLYA==\"
-            crossorigin=\"anonymous\"
-            referrerpolicy=\"no-referrer\">
-    </script>
+    <script src=\"https://cdn.jsdelivr.net/npm/immutable@5.1.1/dist/immutable.min.js\"></script>
     <script>" ++ jsRuntime ++ runtime ++ "\n\n" ++ extra ++ "\n" ++
       "const mainNode =" ++ client ++ ";
       document.body.appendChild(mainNode());

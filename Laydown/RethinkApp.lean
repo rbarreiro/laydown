@@ -68,7 +68,6 @@ abbrev roleHasAccess (role : Option String) (policy : AccessPolicy) : Bool :=
         | .none => false
 
 
-
 inductive Server : List String → Schema → List ServiceTy → Type where
   | base : (roles : List String) → SchemaDef σ → Server roles σ []
   | addService : Server roles σ l → ServiceDef σ t → Server roles σ (t :: l)
@@ -82,17 +81,15 @@ abbrev roleApi_ (role : Option String) (x : List ServiceTy) : Ltype :=
 abbrev roleApi (role : Option String) (x : Server roles schema servs) : Ltype :=
   roleApi_ role servs
 
-abbrev serviceGroup (names : List String) (server : Server roles schema services) : Ltype :=
+abbrev serviceGroup (names : List String) (_ : Server roles schema services) : Ltype :=
   .record (SubrecordFields names (services.map serviceSig))
-
---    (services.filter (λ x => x.name ∈ names)).map (λ x => (x.name, Ltype.record x.args ⟶ .effect x.res))
 
 
 syntax (priority := high) "#server" "[" term,* "]" "[" term "]" "{" term,* "}" : term
 macro_rules
-  | `(#server[$r][$z]{}) => `(Server.base [$r] $z)
-  | `(#server[$r][$z]{$x}) => `(Server.addService (Server.base [$r] $z) $x)
-  | `(#server[$r][$z]{$xs:term,*, $x}) => `(Server.addService #server[$r][$z]{$xs,*} $x)
+  | `(#server[$r,*][$z]{}) => `(Server.base [$r,*] $z)
+  | `(#server[$r,*][$z]{$x}) => `(Server.addService (Server.base [$r,*] $z) $x)
+  | `(#server[$r,*][$z]{$xs:term,*, $x}) => `(Server.addService #server[$r,*][$z]{$xs,*} $x)
 
 
 abbrev login : Ltype := .sum [
@@ -113,7 +110,7 @@ macro "#rapp" "[" s:term "]" "{" n:term "}" : term => `(RethinkApp.mk $s $n)
 
 
 structure RethinkGeneratedApp where
-  server : String
+  server : List String
   client : String
   migrations : List String
 deriving Repr
@@ -166,9 +163,40 @@ def appName (app : RethinkApp) : String :=
       match getServerSchema server with
         | .new name _ => name
 
+
+def genClientServicesRole (role : Option String) (services : List ServiceTy) : String :=
+  let filtered := services.filter (λ x => roleHasAccess role x.access)
+  let defs := filtered.map (
+    λ x =>
+      x.name ++ ": arg => () => {const i = lastReqId++;ws.send(JSON.stringify({" ++
+      s!"service: {escapeString x.name}, reqId:i, arg: arg" ++
+      "}))}"
+  )
+  "Immutable.Map({" ++ String.intercalate "," defs ++ "})"
+
+def genClientServices_ (_ : Server roles sch srvs) : String :=
+  let roles_ := ("guest" , Option.none) :: roles.map (λ x => (x, .some x))
+  "Immutable.Map({" ++ String.intercalate "," (roles_.map (λ (name, role) => s!"{name}: {genClientServicesRole role srvs}")) ++ "})"
+
+def genClientServices : (app : RethinkApp) → String
+  | .mk server _ => genClientServices_ server
+
+
 def genServerApi (app : RethinkApp) : String :=
   "const connect = (login) => (cb) => () => {\n
     const ws = new WebSocket('/appcom/"++ appName app ++"');
+    let lastReqId = 0;
+    let role = null;
+    const servs = "++ genClientServices app ++"
+    ws.onmessage = event => {
+      const data = JSON.parse(event.data);
+      if(role === null){
+        role = data.role;
+        const api = servs.get(role);
+        cb(Immutable.Map().set(role, api))();
+      }else{
+      }
+    }
     ws.onopen = event =>{
       ws.send(JSON.stringify(login));
     }
@@ -180,7 +208,7 @@ def genApp (app : RethinkApp) : RethinkGeneratedApp :=
     | .mk server page =>
         let migs := genMigrations server
         let client := browserTemplate (genServerApi app) (jsGen page)
-        { server := toJson (genServices server) |>.pretty
+        { server := (genServices server).map pretty
         , client := client
         , migrations := migs
         }
@@ -193,7 +221,7 @@ def deployApp (host : String) (port : Nat) (app : RethinkApp) : IO Unit :=
   do
     let a := genApp app
     let name_ := escapeString (appName app) |> escapeforRun
-    let server_ := escapeString a.server |> escapeforRun
+    let server_ := "[" ++ String.intercalate "," (a.server.map (λ x => escapeString x |> escapeforRun)) ++ "]"
     let client_ := escapeString a.client |> escapeforRun
     let migrations_ := "[" ++ String.intercalate "," (a.migrations.map (λ x => escapeString x |> escapeforRun)) ++ "]"
     let payload := "{" ++
