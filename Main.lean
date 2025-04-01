@@ -32,22 +32,34 @@ def server := #server ["user", "admin"] [schema]{
       name := "userMessage",
       args := [("message", .string), ("chatId", .string)],
       res := option .string,
-      access := .roles ["user", "admin"]
+      access := .roles ["user", "admin"],
+      kind := .rpc
     }
-    (
-      [laydown|
-        do {
-          let n ← now,
-          let u ← uuid,
-          let r_ ← chatMessage#insertI
-                      (chatId, u,)
-                      {timestamp := n, content := Mk(userMessage, {text := message})},
-          return Mk(none)
-        }
-      ]
-    )
+    [laydown|
+      do {
+        let n ← now,
+        let u ← uuid,
+        let r_ ← chatMessage#insertI
+                    (chatId, u,)
+                    {timestamp := n, content := Mk(userMessage, {text := message})},
+        return Mk(none)
+      }
+    ],
+  .dbService
+    {
+      name := "getMessages",
+      args := [("chatId", .string)],
+      res := changes idValueType(schema, "chatMessage"),
+      access := .roles ["user", "admin"],
+      kind := .stream
+    }
+    [laydown|
+      return ( !streamChanges (
+        chatMessage#between (!setDim1_2 chatId)
+      ))
+    ]
 }
-def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage"] server) ⟶ .effect .ui) :=
+def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage", "getMessages"] server) ⟶ .effect .ui) :=
   [laydown|
     λ api =>
       do{
@@ -57,8 +69,12 @@ def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage"] server) ⟶ .effec
           let _ ← api#userMessage {message := m, chatId := "chat0"},
           return ()
         },
+        let messages ← api#getMessages {chatId := "chat0"},
         [ui|
-          Chat<br>
+          {{forChanges msg in messages}
+            msg <br>
+          }
+          <br>
           ___(msg#set) b[Send](send)
         ]
       }
@@ -72,8 +88,8 @@ def app := #rapp [server] {
           Mk(user, {user := "admin", password := "1234"})
           (match{
             Mk (guest, api) => mainPage#set [ui| guest ],
-            Mk (user, api) => mainPage#set (!chat api#(userMessage)),
-            Mk (admin, api) => mainPage#set (!chat api#(userMessage))
+            Mk (user, api) => mainPage#set (!chat api#(userMessage, getMessages)),
+            Mk (admin, api) => mainPage#set (!chat api#(userMessage, getMessages))
           }),
         [ui| {mainPage#signal}]
       }
@@ -82,7 +98,7 @@ def app := #rapp [server] {
 
 
 #eval genApp app
-#eval deployApp "localhost" 6401 app
+--#eval deployApp "localhost" 6401 app
 
 --def main : IO Unit :=
 --  IO.println s!"Hello, !"
