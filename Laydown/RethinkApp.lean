@@ -4,10 +4,32 @@ import Lean.Data.Json
 open Lean
 open Json
 
+inductive HasKey : List (String × α) → String → Type where
+  | here : HasKey (⟨name, t⟩ :: r) name
+  | there : HasKey s name → HasKey (h :: s) name
+deriving Repr
+
+def getValue (l : List (String × α)) (p : HasKey l name) : α :=
+  match l with
+    | ((_, v) :: xs) =>
+      match p with
+        | .here => v
+        | .there p => getValue xs p
+
+
+class LSerialize (α : Ltype) where
+
+abbrev idValue (i : Ltype) (v : Ltype) := Ltype.record [
+  ("id", i),
+  ("value", v)
+]
+
 abbrev insertResTy := Ltype.record [("inserted", .nat)]
 
 abbrev table (i : Ltype) (v : Ltype) := Ltype.record [
-  ("insertI", i ⟶ v ⟶ .effect insertResTy)
+  ("insertI", i ⟶ v ⟶ .effect insertResTy),
+  ("between", .interval i ⟶ .stream (idValue i v)),
+  ("items", .stream (idValue i v))
 ]
 
 abbrev serviceEnv : Env :=
@@ -16,6 +38,8 @@ abbrev serviceEnv : Env :=
 abbrev dbServiceEnv : Env :=
   [ ("uuid", .base (.effect .string))
   , ("now", .base (.effect .datetime))
+  , ("streamChanges", .parametric (λ α => .stream α ⟶ .stream (changes α)))
+  , ("setDim1_2", .parametric2 (λ α β => α ⟶ .interval (.tuple [α, β])))
   ]
 
 def uuid [se : SubEnv dbServiceEnv e] : Lexp e (.effect .string) :=
@@ -26,6 +50,16 @@ def now [se : SubEnv dbServiceEnv e] : Lexp e (.effect .datetime) :=
   let p : HasVar dbServiceEnv "now" (.effect .datetime) := by repeat constructor
   Lexp.var "now" (se.adaptVar p)
 
+def streamChanges [se : SubEnv dbServiceEnv e] : Lexp e (.stream α ⟶ .stream (changes α)) :=
+  let p : HasGenVar dbServiceEnv "streamChanges" (.parametric (λ α => .stream α ⟶ .stream (changes α))) := by repeat constructor
+  let w : Lexp e (.stream α ⟶ .stream (changes α)) := Lexp.parametricVar "streamChanges" α (se.adaptVar p)
+  w
+
+def setDim1_2 [se : SubEnv dbServiceEnv e] : Lexp e  (α ⟶ .interval (.tuple [α, β])) :=
+  let p : HasGenVar dbServiceEnv "setDim1_2" (.parametric2 (λ α β => α ⟶ .interval (.tuple [α, β]))) := by repeat constructor
+  let w : Lexp e  (α ⟶ .interval (.tuple [α, β])) := Lexp.parametric2Var "setDim1_2" α β (se.adaptVar p)
+  w
+
 abbrev Schema := List (String × Ltype × Ltype)
 
 abbrev schemaEnv (x : Schema) : Fields :=
@@ -35,9 +69,22 @@ inductive SchemaDef : Schema → Type where
   | new : String → (l : Schema) → SchemaDef l
 deriving Repr
 
+
+
+abbrev idValueType_ (_ : SchemaDef schema) (tbl : String) (p : HasKey schema tbl) : Ltype :=
+  let (i, v) := getValue schema p
+  idValue i v
+
+macro "idValueType" "(" sch:term "," tbl:term  ")": term => `(idValueType_ $sch $tbl (by repeat constructor))
+
 inductive AccessPolicy where
   | all
   | roles (list : List String)
+deriving Repr, ToJson
+
+inductive ServiceKind where
+  | rpc
+  | stream
 deriving Repr, ToJson
 
 structure ServiceTy where
@@ -45,21 +92,22 @@ structure ServiceTy where
   args : Fields
   res : Ltype
   access : AccessPolicy
+  kind : ServiceKind
 deriving Repr, ToJson
 
+abbrev serviceDefTy (t : ServiceTy) : Ltype :=
+  match t.kind with
+    | .rpc => .effect t.res
+    | .stream => .effect (.stream t.res)
 
 inductive ServiceDef : Schema → ServiceTy → Type where
-  | service : (α : ServiceTy) →
-                Lexp (toEnv α.args ++ toEnv (schemaEnv σ) ++ serviceEnv) (.effect α.res) →
-                  ServiceDef σ α
   | dbService : (α : ServiceTy) →
-                Lexp (toEnv α.args ++ toEnv (schemaEnv σ) ++ dbServiceEnv) (.effect α.res) →
+                Lexp (toEnv α.args ++ toEnv (schemaEnv σ) ++ dbServiceEnv) (serviceDefTy α) →
                   ServiceDef σ α
 deriving Repr
 
 def serviceDefToJson (s : ServiceDef schema ty) : Json :=
   match s with
-    | .service _ x => toJson [toJson "service", toJson ty, toJson x]
     | .dbService _ x => toJson [toJson "dbService", toJson ty, toJson x]
 
 instance : ToJson (ServiceDef schema ty) where
@@ -77,12 +125,15 @@ inductive Server : List String → Schema → List ServiceTy → Type where
   | addService : Server roles σ l → ServiceDef σ t → Server roles σ (t :: l)
 deriving Repr
 
-abbrev serviceSig (y : ServiceTy) :=  (y.name , Ltype.record y.args ⟶ .effect y.res)
+abbrev serviceSig (y : ServiceTy) :=
+  match y.kind with
+    | .rpc => (y.name , Ltype.record y.args ⟶ .effect y.res)
+    | .stream =>  (y.name , Ltype.record y.args ⟶ .effect (.stream y.res))
 
 abbrev roleApi_ (role : String) (x : List ServiceTy) : Ltype :=
   Ltype.record ((x.filter (λ z => roleHasAccess role z.access)).map serviceSig)
 
-abbrev roleApi (role : String) (x : Server roles schema servs) : Ltype :=
+abbrev roleApi (role : String) (_ : Server roles schema servs) : Ltype :=
   roleApi_ role servs
 
 abbrev serviceGroup (names : List String) (_ : Server roles schema services) : Ltype :=

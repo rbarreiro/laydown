@@ -12,6 +12,7 @@ inductive Ltype where
   | float
   | string
   | signal (α : Ltype)
+  | stream (α : Ltype)
   | effect (α : Ltype)
   | func : Ltype → Ltype → Ltype
   | ui
@@ -19,6 +20,7 @@ inductive Ltype where
   | sum (fs : List (String × Ltype))
   | list (α : Ltype)
   | tuple (fs : List Ltype)
+  | interval (α : Ltype)
 deriving Repr, ToJson
 
 infixr:10   " ⟶ " => Ltype.func
@@ -101,6 +103,7 @@ inductive Lexp : Env → Ltype → Type where
   | recordnil : Lexp e (Ltype.record [])
   | recordcons : (n : String) → Lexp e α → Lexp e (Ltype.record ts) → Lexp e (Ltype.record ((n, α) :: ts))
   | subrecord : (names : List String) → Lexp e (Ltype.record ts) → Lexp e (Ltype.record (SubrecordFields names ts))
+  | listMap : Lexp e ((α ⟶ β) ⟶ .list α ⟶ .list β)
 deriving Repr
 
 def lexpToJson : Lexp e α → Json
@@ -138,6 +141,7 @@ def lexpToJson : Lexp e α → Json
   | Lexp.recordnil => toJson [toJson "recordnil"]
   | Lexp.recordcons n v r => toJson [toJson "recordcons", toJson n, lexpToJson v, lexpToJson r]
   | Lexp.subrecord names r => toJson [toJson "subrecord", toJson names, lexpToJson r]
+  | Lexp.listMap => toJson [toJson "listMap"]
 
 instance : ToJson (Lexp e α) where
   toJson := lexpToJson
@@ -168,6 +172,12 @@ instance : LToString Ltype.float where
 instance : LToString Ltype.bool where
   toString := .boolToString
 
+class LFunctor (f : Ltype → Ltype) where
+  map : Lexp e ((α ⟶  β) ⟶ f α ⟶ f β)
+
+instance : LFunctor (.list) where
+  map := Lexp.listMap
+
 def the (α : Ltype) : Lexp e (α ⟶ α) := Lexp.lambda "x" (Lexp.var "x" (.here))
 
 declare_syntax_cat laydown
@@ -176,7 +186,13 @@ declare_syntax_cat switch_branch
 declare_syntax_cat tuple_item
 declare_syntax_cat key_value
 
+syntax "[identList|" ident,* "]" : term
+macro_rules
+  | `([identList| ]) => `([])
+  | `([identList| $x:ident]) => `([$(Lean.quote (toString x.getId))])
+  | `([identList| $x:ident, $xs:ident,* ]) => `($(Lean.quote (toString x.getId)) :: [identList| $xs,*])
 
+syntax "[laydown| " laydown "]" : term
 syntax str : laydown
 syntax num : laydown
 syntax laydown "#" ident : laydown
@@ -187,12 +203,12 @@ syntax "!" ident : laydown
 syntax "!" "(" term ")" : laydown
 syntax laydown : inst_do
 syntax "let" ident ":=" laydown : inst_do
+syntax "let" ident ":" term ":=" laydown : inst_do
 syntax "let" ident "←" laydown : inst_do
 syntax "let" "_" "←" laydown : inst_do
 syntax "let" ident ":" term "←" laydown : inst_do
 syntax "do" "{" inst_do,+ "}" : laydown
 syntax "return" laydown : laydown
-syntax "[laydown| " laydown "]" : term
 syntax "(" laydown ")" : laydown
 syntax:10 "λ" ident+ "=>" laydown : laydown
 syntax "!sorry" : laydown
@@ -209,12 +225,8 @@ syntax "(" tuple_item* laydown "," laydown ")" : laydown
 syntax "[" laydown,* "]" : laydown
 syntax "{" key_value,* "}" : laydown
 syntax ident ":=" laydown : key_value
+syntax laydown "<$>" laydown : laydown
 
-syntax "[identList|" ident,* "]" : term
-macro_rules
-  | `([identList| ]) => `([])
-  | `([identList| $x:ident]) => `([$(Lean.quote (toString x.getId))])
-  | `([identList| $x:ident, $xs:ident,* ]) => `($(Lean.quote (toString x.getId)) :: [identList| $xs,*])
 
 
 macro_rules
@@ -263,6 +275,9 @@ macro_rules
       )
   | `([laydown| do { let $n:ident := $v:laydown, $rest:inst_do,* }]) => `(
         Lexp.llet $(Lean.quote (toString n.getId)) [laydown| $v] [laydown| do { $rest,* }]
+      )
+  | `([laydown| do { let $n:ident : $t := $v:laydown, $rest:inst_do,* }]) => `(
+        Lexp.llet $(Lean.quote (toString n.getId)) [laydown| !(the $t) $v] [laydown| do { $rest,* }]
       )
   | `([laydown| !$n:ident]) => `($n)
   | `([laydown| !($t:term)]) => `($t)
@@ -315,9 +330,11 @@ macro_rules
   | `([laydown| ($x:laydown , $xs:tuple_item*)]) => `(
         Lexp.app (Lexp.app Lexp.tupleCons [laydown| $x])  [laydown| ($xs*)]
       )
-  | `([laydown| []]) => `(Lexp.listnil)
-  | `([laydown| [$x:laydown]]) => `(
-        Lexp.app Lexp.listcons [laydown| $x] [laydown| [] ]
+  | `([laydown| []]) =>
+      `(Lexp.listnil)
+  | `([laydown| [$x:laydown]]) =>
+      `(
+        Lexp.app (Lexp.app Lexp.listcons [laydown| $x]) [laydown| [] ]
       )
   | `([laydown| [$x:laydown, $xs:laydown,*]]) => `(
         Lexp.app Lexp.listcons [laydown| $x] [laydown| [ $xs,* ]]
@@ -335,6 +352,8 @@ macro_rules
           [laydown| $v]
           [laydown| { $rest,* }]
       )
+  | `([laydown| $f <$> $xs]) =>
+      `([laydown| !LFunctor.map $f $xs])
 
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
   [laydown|

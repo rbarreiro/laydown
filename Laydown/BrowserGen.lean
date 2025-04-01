@@ -4,6 +4,15 @@ import Laydown.JSGen
 
 def runtime : String :=
   "
+    const button = label => click => () => {
+      const b = document.createElement('button');
+      b.appendChild(label());
+      b.addEventListener('click', click);
+      b.classList.add('btn');
+      b.classList.add('btn-primary');
+      return b;
+    }
+
     const text = txt => () => document.createTextNode(txt);
 
     const signalUI = sig => () => {
@@ -16,20 +25,33 @@ def runtime : String :=
       return span;
     }
 
-    const button = label => click => () => {
-      console.log('click',click);
-      const b = document.createElement('button');
-      b.appendChild(label());
-      b.addEventListener('click', click);
-      b.classList.add('btn');
-      b.classList.add('btn-primary');
-      return b;
+    const signalListUI = sig => render => () => {
+      const span = document.createElement('span');
+      const list = sig.get();
+      list.forEach(x => {
+        span.appendChild(render(x)());
+      });
+      const i = sig.subscribe(newVal => {
+        span.innerHTML = '';
+        newVal.forEach(x => {
+          span.appendChild(render(x)());
+        });
+      });
+      return span;
     }
 
     const concat = a => b => () => {
       const c = document.createElement('span');
       c.appendChild(a());
       c.appendChild(b());
+      return c;
+    }
+
+    const displayList = xs => () => {
+      const c = document.createElement('span');
+      xs.forEach(x => {
+        c.appendChild(x());
+      });
       return c;
     }
 
@@ -78,6 +100,11 @@ def runtime : String :=
       input.addEventListener('input', () => cb(input.value)());
       return input;
     }
+
+    const streamChangesUI = stream => render => () => {
+      //console.log('streamChangesUI', stream);
+      return text('streamChangesUI')()
+    }
   "
 
 def browserTemplate (extra : String) (client : String) : String :=
@@ -104,21 +131,3 @@ def genBrowser [SubEnv ui e]  (x : Lexp e (.effect .ui)) : String :=
 
 def writeBrowser [SubEnv ui e] (client : Lexp e (.effect .ui)) (path : String) : IO Unit :=
   IO.FS.writeFile path (genBrowser client)
-
-
-/-
-def test2 : Lexp ui (.effect .ui) :=
-  [laydown|
-    do{
-      let counter ← !createSignal 0,
-      let up := counter#update (λ x => x + 1),
-      [ui|
-        counter: {counter#signal} <br>
-        b[{counter#signal}](up)
-      ]
-    }
-  ]
-
-#eval genBrowser test2-/
-/-#eval writeBrowser test2 "../test.html"
--/

@@ -24,6 +24,7 @@ def jsRuntime : String :=
     const not = a => !a;
     const eq = a => b => a === b;
     const tupleCons = a => b => b.unshift(a);
+    const listMap = f => xs => xs.map(f);
   "
 
 def escapeString (s : String) : String :=
@@ -75,3 +76,4 @@ def jsGen : Lexp e α → String
   | Lexp.subrecord names r =>
       let names_ := String.intercalate "," (names.map escapeString)
       s!"{jsGen r}.filter((v,k) => [{names_}].includes(k))"
+  | Lexp.listMap => "listMap"
