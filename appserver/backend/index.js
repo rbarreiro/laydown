@@ -25,12 +25,24 @@ const runtime = im.Map({
 function exp2query(exp, ctxt){
     switch(exp[0]){
         case "app":
-            return exp2query(exp[1], ctxt)(exp2query(exp[2],ctxt));
+            const f = exp2query(exp[1], ctxt);
+            const arg = exp2query(exp[2],ctxt);
+            //console.log("app f", "   ", exp[1], "     ", f);
+            return f(arg);
         case "var":
             if(ctxt.has(exp[1]))
                 return ctxt.get(exp[1]);
             else
-                console.log(ctxt.toJS());
+                throw "Variable not found: " + exp[1];
+        case "parametricVar":
+            if(ctxt.has(exp[1]))
+                return ctxt.get(exp[1]);
+            else
+                throw "Variable not found: " + exp[1];
+        case "parametric2Var":
+            if(ctxt.has(exp[1]))
+                return ctxt.get(exp[1]);
+            else
                 throw "Variable not found: " + exp[1];
         case "seqEffect":
             return runtime.get("seqEffect");
@@ -66,8 +78,26 @@ const migrationCtxt = im.Map({
 
 const dbServiceCtxt = im.Map({
     now : () => r.now(),
-    uuid : () => r.uuid()
+    uuid : () => r.uuid(),
+    streamChanges : x => x.changes({includeInitial : true}),
+    setDim1_2 : x => r.expr(['set_Dim1_2', x])
 });
+
+function lowerBound(x){
+    return r.branch(
+        x(0).eq('set_Dim1_2'),
+        r.expr([x(1), r.minval]),
+        r.maxval
+    )
+}
+
+function upperBound(x){
+    return r.branch(
+        x(0).eq('set_Dim1_2'),
+        r.expr([x(1), r.maxval]),
+        r.minval
+    )
+}
 
 function runMigrations(conn, appId, migrations, then){
     r.db("appserver").table("migration_status").get(appId).run(conn, (err, res)=>{
@@ -115,6 +145,7 @@ function addTablesToContext(appId, tables, ctxt){
             t[0], 
             im.Map({
                 insertI: i => v => () => r.db("app_" + appId).table(t[0]).insert({id: i, value: v}),     
+                between: interval => r.db("app_" + appId).table(t[0]).between(lowerBound(interval), upperBound(interval))
     }       )
         );
     });
@@ -150,21 +181,26 @@ function onAppChanges(conn){
                     if (err) throw err;
                     pages[row.new_val.id] = row.new_val.page;
                     const appId = row.new_val.id; 
-                    runMigrations(conn, appId, row.new_val.migrations, ()=>{
-                        const server = JSON.parse(row.new_val.server);
-                        const tables  = JSON.parse(row.new_val.tables);
-                        const ctxt = addTablesToContext(appId, tables, dbServiceCtxt);
-                        services[row.new_val.id] = {}
-                        server.forEach(srv => {
-                            if(srv[0] === "dbService"){
-                                services[row.new_val.id][srv[1].name] ={
-                                    access : srv[1].access,
-                                    query : x => exp2query(srv[2], addArgToCtxt(x, ctxt)),
+                    try{
+                        runMigrations(conn, appId, row.new_val.migrations, ()=>{
+                            const server = JSON.parse(row.new_val.server);
+                            const tables  = JSON.parse(row.new_val.tables);
+                            const ctxt = addTablesToContext(appId, tables, dbServiceCtxt);
+                            services[row.new_val.id] = {}
+                            server.forEach(srv => {
+                                if(srv[0] === "dbService"){
+                                    services[row.new_val.id][srv[1].name] ={
+                                        access : srv[1].access,
+                                        query : x => exp2query(srv[2], addArgToCtxt(x, ctxt)),
+                                        kind : srv[1].kind,
+                                    }
                                 }
-                            }
-                        })
-                        console.log("launching server for ", row.new_val.id)
-                    });
+                            })
+                            console.log("launching server for ", row.new_val.id)
+                        });
+                    }catch(e){
+                        console.log("Error in server: ", row.new_val.id, e);
+                    }
                 });
             })
         });
@@ -291,11 +327,28 @@ app.ws('/appcom/:id', function(ws, req) {
 
         const s = services[req.params.id][value.service];
         if(s.access.hasOwnProperty('all') || s.access.roles.list.includes(role)){
-            const q = s.query(value.arg)();
-            q.run(connection, (err, res)=>{
-                if (err) throw err;
-                ws.send(JSON.stringify({reqId: value.reqId, result: res}));
-            });
+            try{
+                const q = s.query(value.arg)();
+                q.run(connection, (err, res)=>{
+                    if (err) console.log(err);
+                    if(s.kind === "stream"){
+                        res.each((err, row)=>{
+                            if (err) console.log(err);
+                            ws.send(JSON.stringify({reqId: value.reqId, result: row}));
+                        });
+                    }else{
+                        try{
+                            ws.send(JSON.stringify({reqId: value.reqId, result: res}));
+                        }catch(e){
+                            console.log("Error in service: ", [req.params.id, value.service] , " ", e);
+                            return;
+                        }
+                    }
+                });
+            }catch(e){
+                console.log("Error in query: ", e);
+                return;
+            }
         }else{
             ws.send(JSON.stringify({reqId: value.reqId, error: "Unauthorized"}));
         }
