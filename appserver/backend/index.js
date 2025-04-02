@@ -79,7 +79,15 @@ const migrationCtxt = im.Map({
 const dbServiceCtxt = im.Map({
     now : () => r.now(),
     uuid : () => r.uuid(),
-    streamChanges : x => x.changes({includeInitial : true}),
+    streamChanges : x => x.changes({includeInitial : true}).map(x => 
+        r.branch(
+            x.hasFields("new_val").not(), 
+            r.expr({"removed": x("old_val")}),
+            x.hasFields("old_val").not(),
+            r.expr({"added": x("new_val")}),
+            r.expr({"updated": [x("old_val"), x("new_val")]})
+        )   
+    ),
     setDim1_2 : x => r.expr(['set_Dim1_2', x])
 });
 
