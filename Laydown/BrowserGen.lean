@@ -4,68 +4,75 @@ import Laydown.JSGen
 
 def runtime : String :=
   "
-    const button = label => click => () => {
+    const button = label => click => r => {
       const b = document.createElement('button');
-      b.appendChild(label());
-      b.addEventListener('click', click);
+      label(l => b.appendChild(l));
+      b.addEventListener('click', () => click(x=>x));
       b.classList.add('btn');
       b.classList.add('btn-primary');
-      return b;
+      r(b);
     }
 
-    const text = txt => () => document.createTextNode(txt);
+    const text = txt => r => r(document.createTextNode(txt));
 
-    const signalUI = sig => () => {
+    const signalUI = sig => r => {
       const span = document.createElement('span');
-      span.appendChild(sig.get()());
       const i = sig.subscribe(newVal => {
+        newVal(n => {
         span.innerHTML = '';
-        span.appendChild(newVal());
+        span.appendChild(n);
+        });
       });
-      return span;
+      r(span);
     }
 
-    const signalListUI = sig => render => () => {
+    const signalListUI = sig => render => r => {
       const span = document.createElement('span');
-      const list = sig.get();
-      list.forEach(x => {
-        span.appendChild(render(x)());
-      });
       const i = sig.subscribe(newVal => {
         span.innerHTML = '';
         newVal.forEach(x => {
-          span.appendChild(render(x)());
+          render(x).then(z => {
+            span.appendChild(z());
+          });
         });
       });
-      return span;
+      r(span);
     }
 
-    const concat = a => b => () => {
-      const c = document.createElement('span');
-      c.appendChild(a());
-      c.appendChild(b());
-      return c;
+    const concat = a => b => r => {
+      a(a_ => {
+        b(b_ => {
+          const c = document.createElement('span');
+          c.appendChild(a_);
+          c.appendChild(b_);
+          r(c);
+        });
+      })
     }
 
-    const displayList = xs => () => {
-      const c = document.createElement('span');
-      xs.forEach(x => {
-        c.appendChild(x());
+    const displayList = xs => r => {
+      joinEffects(xs)(xs_ => {
+        const c = document.createElement('span');
+        xs_.forEach(x => {
+          c.appendChild(x());
+        });
+        r(c);
       });
-      return c;
     }
 
-    const createSignal = init => () => {
+    const createSignal = init => r => {
       let currentValue = init;
       let callbacks = {};
-      return Immutable.Map({
-        set : (newVal) => () => {
+      r(Immutable.Map({
+        set : (newVal) => r => {
           currentValue = newVal;
           Object.values(callbacks).forEach(cb => cb(currentValue));
+          r();
         },
-        update : f => () =>{
+        update : f => r => {
           currentValue = f(currentValue);
           Object.values(callbacks).forEach(cb => cb(currentValue));
+          r();
         },
         signal : {
           subscribe : (cb) => {
@@ -77,10 +84,10 @@ def runtime : String :=
           unsubsribe : (i) => {
             delete callbacks[i];
           },
-          get : () => currentValue
+          get : r => r(currentValue)
         },
-        get : () => currentValue
-      });
+        get : r => r(currentValue)
+      }));
     }
 
     const mapSignal = f => sig => {
@@ -88,22 +95,36 @@ def runtime : String :=
         subscribe : (cb) => {
           return sig.subscribe(val => cb(f(val)));
         },
-        get : () => f(sig.get()),
+        get : r => sig.get(x => r(f(x))),
         unsubscribe : sig.unsubscribe
       }
     }
 
-    const currentValue = sig => () => sig.get();
-    const br = () => document.createElement('br');
-    const textInput = cb => () => {
+    const br = r => r(document.createElement('br'));
+    const textInput = cb => r => {
       const input = document.createElement('input');
-      input.addEventListener('input', () => cb(input.value)());
-      return input;
+      input.addEventListener('input', () => cb(input.value)(x => x) );
+      r(input);
     }
 
-    const streamChangesUI = stream => render => () => {
-      //console.log('streamChangesUI', stream);
-      return text('streamChangesUI')()
+    const streamChangesUI = stream => render => r => {
+      const span = document.createElement('span');
+      const contentRefs = {};
+      stream(x => {
+        if(x.has('added')) {
+          const v = x.get('added');
+          const k = v.toJSON();
+          render(v)(z => {
+            contentRefs[k] = (contentRefs[k] ?? []).concat([z]);
+            span.appendChild(z);
+          });
+        } else if(x.has('removed')) {
+          console.log(x);
+        }else{
+          console.log(x);
+        }
+      });
+      r(span);
     }
   "
 
@@ -118,9 +139,10 @@ def browserTemplate (extra : String) (client : String) : String :=
   <body>
     <div id=\"root\"></div>
     <script src=\"https://cdn.jsdelivr.net/npm/immutable@5.1.1/dist/immutable.min.js\"></script>
-    <script>" ++ jsRuntime ++ runtime ++ "\n\n" ++ extra ++ "\n" ++
-      "const mainNode =" ++ client ++ ";
-      document.body.appendChild(mainNode());
+    <script>" ++ jsRuntime ++ runtime ++ "\n\n" ++ extra ++ "\n" ++ "
+      const mainNode =" ++ client ++ ";
+
+      mainNode(n => {document.body.appendChild(n)});
     </script>
   </body>
   </html>

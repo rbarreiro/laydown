@@ -3,14 +3,11 @@ import Laydown.Basic
 def jsRuntime : String :=
   "
 
-    const pureEffect = a => () => a;
-    const bindEffect = a => f => () => {
-      const x = a();
-      return f(x)();
-    };
-    const seqEffect = a => b => () => {
-      a();
-      return b();
+    const pureEffect = a => r => r(a);
+    const bindEffect = a => f => r => a(a_ => f(a_)(r));
+    const seqEffect = a => b => r => a(a_ => b(r));
+    const joinEffects = xs => r => {
+      xs.first()(x_ => joinEffects(xs.rest())(rest_ => r(rest_.unshift(x_))));
     }
 
     const intToString = a => a.toString();

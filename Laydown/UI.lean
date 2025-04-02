@@ -1,8 +1,9 @@
 import Laydown.Basic
 
-abbrev changes (α : Ltype) : Ltype := .record [
-    ("old_val", option α),
-    ("new_val", option α)
+abbrev changes (α : Ltype) : Ltype := .sum [
+  ("added", α),
+  ("removed", α),
+  ("updated", .record [("new", α),("old", α)]),
 ]
 
 abbrev createSignalTy := λ α =>

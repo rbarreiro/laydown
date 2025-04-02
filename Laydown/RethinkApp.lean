@@ -219,15 +219,26 @@ def appName (app : RethinkApp) : String :=
       match getServerSchema server with
         | .new name _ => name
 
+def genService (x : ServiceTy) : String :=
+let i := "const i = '' + (lastReqId++)"
+let msg := "const msg = JSON.stringify({" ++
+      s!"service: {escapeString x.name}, reqId:i, arg: arg" ++
+      "})"
+let rpcSetCallback := "message_call_backs[i] = x => {r(x);delete message_call_backs[i]};"
+let streamSetCallback := "message_call_backs[i] = x => {cb(x)};"
+match x.kind with
+  | .rpc =>
+    x.name ++ ": arg => r => {" ++
+          s!"{i};{msg};{rpcSetCallback};ws.send(msg)" ++
+    "}"
+  | .stream =>
+    x.name ++ ": arg => r => {" ++
+        "r(cb => {" ++ s!"{i};{msg};{streamSetCallback};ws.send(msg);" ++ "})" ++
+      "}"
 
 def genClientServicesRole (role : String) (services : List ServiceTy) : String :=
   let filtered := services.filter (λ x => roleHasAccess role x.access)
-  let defs := filtered.map (
-    λ x =>
-      x.name ++ ": arg => () => {const i = '' + (lastReqId++);ws.send(JSON.stringify({" ++
-      s!"service: {escapeString x.name}, reqId:i, arg: arg" ++
-      "}))}"
-  )
+  let defs := filtered.map genService
   "Immutable.Map({" ++ String.intercalate "," defs ++ "})"
 
 def genClientServices_ (_ : Server roles sch srvs) : String :=
@@ -239,8 +250,9 @@ def genClientServices : (app : RethinkApp) → String
 
 
 def genServerApi (app : RethinkApp) : String :=
-  "const connect = (login) => (cb) => () => {\n
+  "const connect = login => cb => r => {\n
     const ws = new WebSocket('/appcom/"++ appName app ++"');
+    const message_call_backs = {};
     let lastReqId = 0;
     let role = null;
     const servs = "++ genClientServices app ++"
@@ -249,13 +261,16 @@ def genServerApi (app : RethinkApp) : String :=
       if(role === null){
         role = data.role;
         const api = servs.get(role);
-        cb(Immutable.Map().set(role, api))();
+        cb(Immutable.Map().set(role, api))(x => x);
       }else{
+        const i = data.reqId;
+        message_call_backs[i](Immutable.fromJS(data.result));
       }
     }
     ws.onopen = event =>{
       ws.send(JSON.stringify(login));
     }
+    r(x=>x)
   }
   "
 

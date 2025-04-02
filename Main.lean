@@ -59,6 +59,18 @@ def server := #server ["user", "admin"] [schema]{
       ))
     ]
 }
+
+def showMsg [SubEnv ui e] : Lexp e (idValueType(schema, "chatMessage") ⟶ .effect .ui) :=
+  [laydown|
+    λ msg =>
+      match msg#value#content with {
+        Mk (userMessage, userMsg) =>
+          [ui| {userMsg#text} ],
+        Mk (form, formMsg) =>
+          [ui| form]
+      }
+  ]
+
 def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage", "getMessages"] server) ⟶ .effect .ui) :=
   [laydown|
     λ api =>
@@ -72,7 +84,7 @@ def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage", "getMessages"] ser
         let messages ← api#getMessages {chatId := "chat0"},
         [ui|
           {{forChanges msg in messages}
-            msg <br>
+            {!showMsg msg} <br>
           }
           <br>
           ___(msg#set) b[Send](send)
@@ -98,7 +110,7 @@ def app := #rapp [server] {
 
 
 #eval genApp app
---#eval deployApp "localhost" 6401 app
+#eval deployApp "localhost" 6401 app
 
 --def main : IO Unit :=
 --  IO.println s!"Hello, !"
