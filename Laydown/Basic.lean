@@ -195,8 +195,8 @@ macro_rules
 syntax "[laydown| " laydown "]" : term
 syntax str : laydown
 syntax num : laydown
-syntax laydown "#" ident : laydown
-syntax laydown "#" "(" ident,* ")" : laydown
+syntax laydown "~" ident : laydown
+syntax laydown "~" "(" ident,* ")" : laydown
 syntax ident : laydown
 syntax:100 laydown:100 laydown:101 : laydown
 syntax "!" ident : laydown
@@ -226,7 +226,8 @@ syntax "[" laydown,* "]" : laydown
 syntax "{" key_value,* "}" : laydown
 syntax ident ":=" laydown : key_value
 syntax laydown "<$>" laydown : laydown
-
+syntax "False" : laydown
+syntax "True" : laydown
 
 
 macro_rules
@@ -288,10 +289,10 @@ macro_rules
   | `([laydown| λ $n:ident $r:ident* => $body:laydown]) => `(
         Lexp.lambda $(Lean.quote (toString n.getId)) [laydown| λ $r* => $body]
       )
-  | `([laydown| $x:laydown#$f:ident]) => `(
+  | `([laydown| $x:laydown~$f:ident]) => `(
         Lexp.recordGet $(Lean.quote (toString f.getId)) [laydown| $x] (by repeat constructor)
       )
-  | `([laydown| $x:laydown#($fs:ident,*)]) => `(
+  | `([laydown| $x:laydown~($fs:ident,*)]) => `(
         Lexp.subrecord [identList| $fs,* ] [laydown| $x]
       )
   | `([laydown| $x + $y]) => `([laydown| !LHAdd.hadd $x $y])
@@ -354,6 +355,10 @@ macro_rules
       )
   | `([laydown| $f <$> $xs]) =>
       `([laydown| !LFunctor.map $f $xs])
+  | `([laydown| False]) =>
+      `(Lexp.litBool false)
+  | `([laydown| True]) =>
+      `(Lexp.litBool true)
 
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
   [laydown|
@@ -379,6 +384,12 @@ def adaptVarAppend (p : HasGenVar a n α) : HasGenVar (more ++ a) n α :=
   match more with
    | [] => p
    | _ :: rest => HasGenVar.there (@adaptVarAppend a n α rest p)
+
+def none : Lexp e (option α) :=
+  [laydown| Mk(none)]
+
+def some : Lexp e (α ⟶ option α) :=
+  [laydown|λ x => Mk(some, x)]
 
 instance [s : SubEnv a b] : SubEnv a (more ++ b) where
   adaptVar x := adaptVarAppend (s.adaptVar x)

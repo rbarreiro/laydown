@@ -6,6 +6,7 @@ def runtime : String :=
   "
     const button = label => click => r => {
       const b = document.createElement('button');
+      b.setAttribute('type', 'button');
       label(l => b.appendChild(l));
       b.addEventListener('click', () => click(x=>x));
       b.classList.add('btn');
@@ -101,22 +102,43 @@ def runtime : String :=
     }
 
     const br = r => r(document.createElement('br'));
-    const textInput = cb => r => {
+
+    const textInput = init => cb => r => {
       const input = document.createElement('input');
+      input.value = init;
+      input.setAttribute('type', 'text');
+      input.classList.add('form-control');
       input.addEventListener('input', () => cb(input.value)(x => x) );
       r(input);
     }
 
-    const streamChangesUI = stream => render => r => {
+    const streamChangesUI = stream => render => orderBy => r => {
       const span = document.createElement('span');
-      const contentRefs = {};
+      const contentRefs = [];
       stream(x => {
         if(x.has('added')) {
           const v = x.get('added');
           const k = v.toJSON();
+          const o = orderBy(v);
           render(v)(z => {
-            contentRefs[k] = (contentRefs[k] ?? []).concat([z]);
-            span.appendChild(z);
+            if(contentRefs.length === 0) {
+              contentRefs.push({key: k, orderKey: orderBy(v)});
+              span.appendChild(z);
+            }else if(o<= contentRefs[0].orderKey) {
+              contentRefs.unshift({key: k, orderKey: o});
+              span.prepend(z);
+            }else if(o >= contentRefs[contentRefs.length - 1].orderKey) {
+              contentRefs.push({key: k, orderKey: o});
+              span.appendChild(z);
+            }else{
+              for(let i = contentRefs.length - 2; i >= 0; i--) {
+                if(o >= contentRefs[i].orderKey) {
+                  contentRefs.splice(i + 1, 0, {key: k, orderKey: o});
+                  span.insertBefore(z, span.childNodes[i + 1]);
+                  break;
+                }
+              }
+            }
           });
         } else if(x.has('removed')) {
           console.log(x);
@@ -125,6 +147,18 @@ def runtime : String :=
         }
       });
       r(span);
+    }
+
+    const form = f => render => r => {
+      const frm = document.createElement('form');
+      frm.addEventListener('submit', e => {
+        e.preventDefault();
+        f(Immutable.Map({reset: r => r(frm.reset()) }))(x => x);
+      });
+      render(render_ =>{
+        frm.appendChild(render_);
+        r(frm);
+      })
     }
   "
 
