@@ -196,3 +196,7 @@ macro_rules
 
 instance [SubEnv ui e] : LFunctor e .signal where
   map := [laydown| λ f x =>  !mapSignal f x]
+
+instance [SubEnv ui e] : LApplicative e .signal where
+  pure := sorry
+  seq := sorry

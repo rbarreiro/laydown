@@ -308,7 +308,7 @@ app.ws('/appcom/:id', function(ws, req) {
                             role = res.role;
                             ws.send(JSON.stringify({role: role}));
                         }else{
-                            ws.send(JSON.stringify({error: "Invalid password"}));
+                            ws.send(JSON.stringify({error: "Invalid Login"}));
                         }
                     }else{
                         bcrypt.compare(value.user.password, res.saltedPassword, function(err, result) {
@@ -316,12 +316,12 @@ app.ws('/appcom/:id', function(ws, req) {
                                 role = res.role;
                                 ws.send(JSON.stringify({role: role}));
                             }else{
-                                ws.send(JSON.stringify({error: "Invalid password"}));
+                                ws.send(JSON.stringify({error: "Invalid Login"}));
                             }
                         });
                     }
                 }else{
-                    ws.send(JSON.stringify({error: "Invalid user"}));
+                    ws.send(JSON.stringify({error: "Invalid Login"}));
                 }
             });
         }else{

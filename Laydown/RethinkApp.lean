@@ -163,7 +163,7 @@ abbrev login : Ltype := .sum [
 
 abbrev serverConnection (roles : List String) (services : List ServiceTy) : Env :=
   let rolesServs := roles.map (λ x => (x, roleApi_ x services))
-  let servs := ("guest", roleApi_ "guest" services) :: rolesServs
+  let servs := ("fail", .record [("error", .string)]) :: ("guest", roleApi_ "guest" services) :: rolesServs
   [("connect", .base (login ⟶ (.sum servs ⟶ .effect unit) ⟶ .effect unit))]
 
 inductive RethinkApp : Type where
@@ -267,9 +267,13 @@ def genServerApi (app : RethinkApp) : String :=
     ws.onmessage = event => {
       const data = JSON.parse(event.data);
       if(role === null){
-        role = data.role;
-        const api = servs.get(role);
-        cb(Immutable.Map().set(role, api))(x => x);
+        if(data.hasOwnProperty('role')){
+          role = data.role;
+          const api = servs.get(role);
+          cb(Immutable.Map().set(role, api))(x => x);
+        }else{
+          cb(Immutable.Map().set('fail', data.error))(x => x);
+        }
       }else{
         const i = data.reqId;
         message_call_backs[i](Immutable.fromJS(data.result));

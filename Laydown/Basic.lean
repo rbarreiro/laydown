@@ -252,6 +252,7 @@ syntax "[" laydown,* "]" : laydown
 syntax "{" key_value,* "}" : laydown
 syntax ident ":=" laydown : key_value
 syntax laydown "<$>" laydown : laydown
+syntax laydown "<*>" laydown : laydown
 syntax "False" : laydown
 syntax "True" : laydown
 syntax "let" ident ":=" laydown "in" laydown : laydown
@@ -380,8 +381,14 @@ macro_rules
           [laydown| $v]
           [laydown| { $rest,* }]
       )
-  | `([laydown| $f <$> $xs]) =>
-      `([laydown| !LFunctor.map $f $xs])
+  | `([laydown| $f <$> $x]) =>
+      `([laydown| !LFunctor.map $f $x])
+  | `([laydown| $f <*> $x]) =>
+      `(
+        Lexp.app
+          (Lexp.app LApplicative.seq [laydown| $f])
+          (Lexp.lambdaConst [laydown| $x])
+      )
   | `([laydown| False]) =>
       `(Lexp.litBool false)
   | `([laydown| True]) =>

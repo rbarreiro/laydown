@@ -98,8 +98,9 @@ def app := #rapp [server] {
       do {
         let mainPage ← !createSignal [ui| connecting to ws],
         connect
-          Mk(user, {user := "admin", password := "1234"})
+          Mk(user, {user := "admin", password := "123"})
           (match{
+            Mk (fail, error) => mainPage~set [ui| login fail ],
             Mk (guest, api) => mainPage~set [ui| guest ],
             Mk (user, api) => mainPage~set (!chat api~(userMessage, getMessages)),
             Mk (admin, api) => mainPage~set (!chat api~(userMessage, getMessages))
