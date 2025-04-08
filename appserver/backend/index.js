@@ -58,6 +58,8 @@ function exp2query(exp, ctxt){
             return runtime.get("tubleCons");
         case "lambda":
             return x => exp2query(exp[2], ctxt.set(exp[1], x));
+        case "lambdaConst":
+            return () => exp2query(exp[1], ctxt);
         case "recordGet":
             return exp2query(exp[2], ctxt).get(exp[1]);
         case "recordcons":
