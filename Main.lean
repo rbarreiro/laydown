@@ -1,7 +1,7 @@
 import Laydown
 
 def schema :=
-  SchemaDef.new "caaty"
+  mkSchema ["caaty"]
   [
     (
       "chatMessage",
@@ -27,14 +27,14 @@ def schema :=
   ]
 
 def server := #server ["user", "admin"] [schema]{
-  .dbService
+  dbService :
     {
       name := "userMessage",
       args := [("message", .string), ("chatId", .string)],
       res := option .string,
       access := .roles ["user", "admin"],
       kind := .rpc
-    }
+    } :=
     [laydown|
       do {
         let n ← now,
@@ -42,19 +42,19 @@ def server := #server ["user", "admin"] [schema]{
         let r_ ← chatMessage~insertI
                     (chatId, u,)
                     {timestamp := n, content := Mk(userMessage, {text := message})},
-        return Mk(none)
+        !pure Mk(none)
       }
     ],
-  .dbService
+  dbService :
     {
       name := "getMessages",
       args := [("chatId", .string)],
       res := changes idValueType(schema, "chatMessage"),
       access := .roles ["user", "admin"],
       kind := .stream
-    }
+    } :=
     [laydown|
-      return ( !streamChanges (
+      !pure ( !streamChanges (
         chatMessage~between (!setDim1_2 chatId)
       ))
     ]
@@ -78,9 +78,9 @@ def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage", "getMessages"] ser
         let send : option .string ⟶ .effect unit := match{
           Mk(some, m) => do {
             let _ ← api~userMessage {message := m, chatId := "chat0"},
-            return ()
+            !pure ()
           },
-          Mk(none) => return ()
+          Mk(none) => !pure ()
         },
         let messages ← api~getMessages {chatId := "chat0"},
         [ui|

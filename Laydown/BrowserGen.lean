@@ -114,31 +114,14 @@ def runtime : String :=
 
     const streamChangesUI = stream => render => orderBy => r => {
       const span = document.createElement('span');
-      const contentRefs = [];
+      const contentRefs = {};
       stream(x => {
         if(x.has('added')) {
           const v = x.get('added');
           const k = v.toJSON();
-          const o = orderBy(v);
           render(v)(z => {
-            if(contentRefs.length === 0) {
-              contentRefs.push({key: k, orderKey: orderBy(v)});
-              span.appendChild(z);
-            }else if(o<= contentRefs[0].orderKey) {
-              contentRefs.unshift({key: k, orderKey: o});
-              span.prepend(z);
-            }else if(o >= contentRefs[contentRefs.length - 1].orderKey) {
-              contentRefs.push({key: k, orderKey: o});
-              span.appendChild(z);
-            }else{
-              for(let i = contentRefs.length - 2; i >= 0; i--) {
-                if(o >= contentRefs[i].orderKey) {
-                  contentRefs.splice(i + 1, 0, {key: k, orderKey: o});
-                  span.insertBefore(z, span.childNodes[i + 1]);
-                  break;
-                }
-              }
-            }
+            contentRefs[k] = (contentRefs[k] ?? []).concat([z]);
+            span.appendChild(z);
           });
         } else if(x.has('removed')) {
           console.log(x);
@@ -159,6 +142,19 @@ def runtime : String :=
         frm.appendChild(render_);
         r(frm);
       })
+    }
+
+    const withLabel = label => value => r => {
+      const div = document.createElement('div');
+      div.classList.add('mb-3');
+      const l = document.createElement('label');
+
+      l.classList.add('form-label');
+      div.appendChild(l);
+      value(x => {
+        div.appendChild(x);
+        r(div);
+      });
     }
   "
 

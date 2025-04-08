@@ -5,7 +5,7 @@ def jsRuntime : String :=
 
     const pureEffect = a => r => r(a);
     const bindEffect = a => f => r => a(a_ => f(a_)(r));
-    const seqEffect = a => b => r => a(a_ => b(r));
+    const seqEffect = f => x => r => f(f_ => x()(x_ => r(f_(x_))));
     const joinEffects = xs => r => {
       xs.first()(x_ => joinEffects(xs.rest())(rest_ => r(rest_.unshift(x_))));
     }
@@ -74,3 +74,5 @@ def jsGen : Lexp e α → String
       let names_ := String.intercalate "," (names.map escapeString)
       s!"{jsGen r}.filter((v,k) => [{names_}].includes(k))"
   | Lexp.listMap => "listMap"
+  | Lexp.recorduncons n r =>
+      s!"{jsGen r}.delete({escapeString n})"

@@ -16,7 +16,7 @@ const pages = {};
 const services = {};
 
 const runtime = im.Map({
-    seqEffect : x => y => () => [x(), y()],
+    seqEffect : f => x => () => f()(x()()),
     bindEffect : x => y => () => x().do((z => y(z)())) ,
     pureEffect : x => () => x,
     tubleCons : x => xs => xs.prepend(x)

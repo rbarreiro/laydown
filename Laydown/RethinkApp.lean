@@ -16,9 +16,6 @@ def getValue (l : List (String × α)) (p : HasKey l name) : α :=
         | .here => v
         | .there p => getValue xs p
 
-
-class LSerialize (α : Ltype) where
-
 abbrev idValue (i : Ltype) (v : Ltype) := Ltype.record [
   ("id", i),
   ("value", v)
@@ -62,11 +59,16 @@ def setDim1_2 [se : SubEnv dbServiceEnv e] : Lexp e  (α ⟶ .interval (.tuple [
 
 abbrev Schema := List (String × Ltype × Ltype)
 
+inductive IsDataSchema : Schema → Type where
+  | base : IsData key  → IsData value → IsDataSchema [(name, key, value)]
+  | cons : IsDataSchema xs → IsData key → IsData value → IsDataSchema ((name, key, value) :: xs)
+deriving Repr
+
 abbrev schemaEnv (x : Schema) : Fields :=
   x.map (λ (n, k, v) => (n, table k v))
 
 inductive SchemaDef : Schema → Type where
-  | new : String → (l : Schema) → SchemaDef l
+  | new : String → (l : Schema) → IsDataSchema l → SchemaDef l
 deriving Repr
 
 
@@ -103,12 +105,13 @@ abbrev serviceDefTy (t : ServiceTy) : Ltype :=
 inductive ServiceDef : Schema → ServiceTy → Type where
   | dbService : (α : ServiceTy) →
                 Lexp (toEnv α.args ++ toEnv (schemaEnv σ) ++ dbServiceEnv) (serviceDefTy α) →
+                  IsData α.res → IsData (Ltype.record α.args) →
                   ServiceDef σ α
 deriving Repr
 
 def serviceDefToJson (s : ServiceDef schema ty) : Json :=
   match s with
-    | .dbService _ x => toJson [toJson "dbService", toJson ty, toJson x]
+    | .dbService _ x _ _ => toJson [toJson "dbService", toJson ty, toJson x]
 
 instance : ToJson (ServiceDef schema ty) where
   toJson := serviceDefToJson
@@ -139,6 +142,11 @@ abbrev roleApi (role : String) (_ : Server roles schema servs) : Ltype :=
 abbrev serviceGroup (names : List String) (_ : Server roles schema services) : Ltype :=
   .record (SubrecordFields names (services.map serviceSig))
 
+macro "mkSchema" "[" n:term "]" i:term : term =>
+  `(SchemaDef.new $n $i (by repeat constructor))
+
+macro "dbService" ":" t:term ":=" x:term : term =>
+  `(ServiceDef.dbService $t $x (by repeat constructor) (by repeat constructor))
 
 syntax (priority := high) "#server" "[" term,* "]" "[" term "]" "{" term,* "}" : term
 macro_rules
@@ -187,7 +195,7 @@ abbrev migrationEnv : Env :=
 def genStartMigration  (name : String)  (sch : Schema) : Lexp migrationEnv (.effect unit) :=
   match sch with
     | [] =>
-      [laydown| return ()]
+      [laydown| !pure ()]
     | (n, _, _) :: xs =>
       [laydown|
         do {
@@ -199,7 +207,7 @@ def genStartMigration  (name : String)  (sch : Schema) : Lexp migrationEnv (.eff
 
 def genMigrations_ (schDef : SchemaDef sch) : List String :=
   match schDef with
-    | .new name sch =>
+    | .new name sch _ =>
       [genStartMigration name sch |> toJson |>.pretty]
 
 def genMigrations (server : Server roles sch srvs) : List String :=
@@ -217,7 +225,7 @@ def appName (app : RethinkApp) : String :=
   match app with
     | .mk server _ =>
       match getServerSchema server with
-        | .new name _ => name
+        | .new name _ _ => name
 
 def genService (x : ServiceTy) : String :=
 let i := "const i = '' + (lastReqId++)"

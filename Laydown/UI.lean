@@ -33,7 +33,9 @@ abbrev ui : Env := [
   ("textInput", .base (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui)),
   ("streamChangesUI", .parametric2 (λ α β => .stream (changes α) ⟶ (α ⟶ .effect .ui) ⟶ (α ⟶ β) ⟶ .effect .ui)),
   ("form", .base ((formSubmitContext ⟶ .effect unit) ⟶ .effect .ui ⟶ .effect .ui)),
+  ("withLabel", .base (.effect .ui ⟶ .effect .ui ⟶ .effect .ui)),
 ]
+
 
 def button [se : SubEnv ui e] : Lexp e (.effect .ui ⟶ .effect unit ⟶ .effect .ui) :=
   let p : HasVar ui "button" (.effect .ui ⟶ .effect unit ⟶.effect .ui) := by repeat constructor
@@ -98,11 +100,16 @@ def streamChangesUI [se : SubEnv ui e] :
             by repeat constructor
   Lexp.parametric2Var "streamChangesUI" α β (se.adaptVar p)
 
-
 def form [se : SubEnv ui e] :
   Lexp e ((formSubmitContext ⟶ .effect unit) ⟶ .effect .ui ⟶ .effect .ui) :=
   let p : HasVar ui "form" ((formSubmitContext ⟶ .effect unit) ⟶ .effect .ui ⟶ .effect .ui) := by repeat constructor
   Lexp.var "form" (se.adaptVar p)
+
+def withLabel [se : SubEnv ui e] :
+  Lexp e (.effect .ui ⟶ .effect .ui ⟶ .effect .ui) :=
+  let p : HasVar ui "withLabel" (.effect .ui ⟶ .effect .ui ⟶ .effect .ui) := by repeat constructor
+  Lexp.var "withLabel" (se.adaptVar p)
+
 
 class LDisplay (α : Ltype) where
   display [SubEnv ui e] : Lexp e (α ⟶ .effect .ui)
@@ -139,7 +146,7 @@ declare_syntax_cat ui
 syntax "[ui| " ui "]" : laydown
 syntax ":" : ui
 syntax "___(" laydown ")" : ui
-syntax "_" laydown "_(" laydown ")" : ui
+syntax "__" laydown "__(" laydown ")" : ui
 syntax ident : ui
 syntax ui ui : ui
 syntax "{ " laydown " }" : ui
@@ -148,6 +155,7 @@ syntax  "{{forChanges " ident "in" laydown "order" "by" laydown "}"  ui "}": ui
 syntax  "{{forChanges " ident "in" laydown "}"  ui "}": ui
 syntax "<br>" : ui
 syntax "b[" ui "](" laydown ")" : ui
+syntax ui "::" ui : ui
 
 
 macro_rules
@@ -155,7 +163,7 @@ macro_rules
       `(Lexp.app text (Lexp.litStr ": "))
   | `([laydown| [ui| ___($c) ]]) =>
       `([laydown| !textInput "" $c])
-  | `([laydown| [ui| _ $v _($c) ]]) =>
+  | `([laydown| [ui| __ $v __($c) ]]) =>
       `([laydown| !textInput $v $c])
   | `([laydown| [ui| $txt:ident ]]) =>
       `( Lexp.app
@@ -183,3 +191,8 @@ macro_rules
       `([laydown| !streamChangesUI $xs (λ $i => [ui|$render]) (λ $i => $orderby)])
   | `([laydown| [ui| b[$b]($c) ]]) =>
       `([laydown| !button [ui|$b] $c])
+  | `([laydown| [ui| $x :: $y ]]) =>
+      `([laydown| !withLabel [ui|$x] [ui|$y]])
+
+instance [SubEnv ui e] : LFunctor e .signal where
+  map := [laydown| λ f x =>  !mapSignal f x]

@@ -23,6 +23,22 @@ inductive Ltype where
   | interval (α : Ltype)
 deriving Repr, ToJson
 
+inductive IsData : Ltype → Type where
+  | int : IsData Ltype.int
+  | bool : IsData Ltype.bool
+  | nat : IsData Ltype.nat
+  | datetime : IsData Ltype.datetime
+  | float : IsData Ltype.float
+  | string : IsData Ltype.string
+  | tuplebase : IsData (Ltype.tuple [])
+  | tuplecons : IsData (Ltype.tuple ts) → IsData α → IsData (Ltype.tuple (α :: ts))
+  | recordbase : IsData (Ltype.record [])
+  | recordcons : IsData (Ltype.record ts) → IsData α → IsData (Ltype.record ((n, α) :: ts))
+  | list : IsData α → IsData (Ltype.list α)
+  | sumbase : IsData (Ltype.sum [])
+  | sumcons : IsData (Ltype.sum ts) → IsData α → IsData (Ltype.sum ((n, α) :: ts))
+deriving Repr
+
 infixr:10   " ⟶ " => Ltype.func
 
 abbrev unit := Ltype.tuple []
@@ -81,7 +97,7 @@ inductive Lexp : Env → Ltype → Type where
   | mk : (n : String) → Lexp e α → (p : HasField ts n α) → Lexp e (Ltype.sum ts)
   | pureEffect : Lexp e (α ⟶ Ltype.effect α)
   | bindEffect : Lexp e (Ltype.effect α ⟶ (α ⟶ Ltype.effect β) ⟶ Ltype.effect β)
-  | seqEffect : Lexp e (Ltype.effect unit ⟶ Ltype.effect β ⟶ Ltype.effect β)
+  | seqEffect : Lexp e (Ltype.effect (α ⟶ β) ⟶ (unit ⟶ Ltype.effect α) ⟶ Ltype.effect β)
   | intToString : Lexp e (Ltype.int ⟶ Ltype.string)
   | floatToString : Lexp e (Ltype.float ⟶ Ltype.string)
   | boolToString : Lexp e (Ltype.bool ⟶ Ltype.string)
@@ -104,6 +120,7 @@ inductive Lexp : Env → Ltype → Type where
   | recordcons : (n : String) → Lexp e α → Lexp e (Ltype.record ts) → Lexp e (Ltype.record ((n, α) :: ts))
   | subrecord : (names : List String) → Lexp e (Ltype.record ts) → Lexp e (Ltype.record (SubrecordFields names ts))
   | listMap : Lexp e ((α ⟶ β) ⟶ .list α ⟶ .list β)
+  | recorduncons : (n : String) → Lexp e (Ltype.record ((n, α) :: ts)) → Lexp e (Ltype.record ts)
 deriving Repr
 
 def lexpToJson : Lexp e α → Json
@@ -142,6 +159,7 @@ def lexpToJson : Lexp e α → Json
   | Lexp.recordcons n v r => toJson [toJson "recordcons", toJson n, lexpToJson v, lexpToJson r]
   | Lexp.subrecord names r => toJson [toJson "subrecord", toJson names, lexpToJson r]
   | Lexp.listMap => toJson [toJson "listMap"]
+  | Lexp.recorduncons n r => toJson [toJson "recorduncons", toJson n, lexpToJson r]
 
 instance : ToJson (Lexp e α) where
   toJson := lexpToJson
@@ -172,11 +190,19 @@ instance : LToString Ltype.float where
 instance : LToString Ltype.bool where
   toString := .boolToString
 
-class LFunctor (f : Ltype → Ltype) where
+class LFunctor (e : Env) (f : Ltype → Ltype) where
   map : Lexp e ((α ⟶  β) ⟶ f α ⟶ f β)
 
-instance : LFunctor (.list) where
+class LApplicative (e : Env) (f : Ltype → Ltype) extends LFunctor e f where
+  pure : Lexp e (α ⟶ f α)
+  seq : Lexp e (f (α ⟶ β) ⟶ (unit ⟶ f α) ⟶ f β)
+
+class LMonad (e : Env) (f : Ltype → Ltype) extends LApplicative e f where
+  bind : Lexp e (f α ⟶ (α ⟶ f β) ⟶ f β)
+
+instance : LFunctor e (.list) where
   map := Lexp.listMap
+
 
 def the (α : Ltype) : Lexp e (α ⟶ α) := Lexp.lambda "x" (Lexp.var "x" (.here))
 
@@ -185,6 +211,7 @@ declare_syntax_cat inst_do
 declare_syntax_cat switch_branch
 declare_syntax_cat tuple_item
 declare_syntax_cat key_value
+declare_syntax_cat let_decl
 
 syntax "[identList|" ident,* "]" : term
 macro_rules
@@ -208,7 +235,6 @@ syntax "let" ident "←" laydown : inst_do
 syntax "let" "_" "←" laydown : inst_do
 syntax "let" ident ":" term "←" laydown : inst_do
 syntax "do" "{" inst_do,+ "}" : laydown
-syntax "return" laydown : laydown
 syntax "(" laydown ")" : laydown
 syntax:10 "λ" ident+ "=>" laydown : laydown
 syntax "!sorry" : laydown
@@ -228,29 +254,30 @@ syntax ident ":=" laydown : key_value
 syntax laydown "<$>" laydown : laydown
 syntax "False" : laydown
 syntax "True" : laydown
+syntax "let" ident ":=" laydown "in" laydown : laydown
+syntax "let" ident ":" term ":=" laydown "in" laydown : laydown
 
 
 macro_rules
   | `([laydown| !sorry]) => `(sorry)
   | `([laydown|  $s:str]) => `(Lexp.litStr $s)
-  | `([laydown| return $x:laydown]) => `(Lexp.app Lexp.pureEffect [laydown| $x])
   | `([laydown| $x:num]) => `(Lexp.litInt $x)
   | `([laydown| $x:ident]) => `(Lexp.var $(Lean.quote (toString x.getId)) (by repeat constructor))
   | `([laydown| $f:laydown $a:laydown]) => `(Lexp.app [laydown| $f] [laydown| $a])
   | `([laydown| do {$x:laydown, $xs:inst_do,* }]) => `(
           Lexp.app
             (Lexp.app
-              Lexp.seqEffect
+              LMonad.bind
               [laydown| $x]
             )
-            [laydown| do { $xs,* }]
+            (Lexp.lambdaConst [laydown| do { $xs,* }])
 
-        )
+      )
   | `([laydown| do {$x:laydown}]) => `([laydown| $x])
   | `([laydown| do { let $n:ident ← $v:laydown, $rest:inst_do,* }]) => `(
         Lexp.app
           (Lexp.app
-            Lexp.bindEffect
+            LMonad.bind
             [laydown| $v]
           )
             (Lexp.lambda $(Lean.quote (toString n.getId)) [laydown| do { $rest,* }])
@@ -259,7 +286,7 @@ macro_rules
   | `([laydown| do { let _ ← $v:laydown, $rest:inst_do,* }]) => `(
         Lexp.app
           (Lexp.app
-            Lexp.bindEffect
+            LMonad.bind
             [laydown| $v]
           )
             (Lexp.lambdaConst [laydown| do { $rest,* }])
@@ -268,7 +295,7 @@ macro_rules
   | `([laydown| do { let $n:ident : $t:term ← $v:laydown, $rest:inst_do,* }]) => `(
         Lexp.app
           (Lexp.app
-            Lexp.bindEffect
+            LMonad.bind
             [laydown| !(the (Ltype.effect $t)) $v]
           )
             (Lexp.lambda $(Lean.quote (toString n.getId)) [laydown| do { $rest,* }])
@@ -359,6 +386,15 @@ macro_rules
       `(Lexp.litBool false)
   | `([laydown| True]) =>
       `(Lexp.litBool true)
+  | `([laydown| let $n:ident := $v:laydown in $b:laydown]) => `(
+        Lexp.llet $(Lean.quote (toString n.getId)) [laydown| $v] [laydown| $b]
+      )
+  | `([laydown| let $n:ident : $t:term := $v:laydown in $b:laydown]) => `(
+        Lexp.llet $(Lean.quote (toString n.getId)) [laydown| !(the $t) $v] [laydown| $b]
+      )
+
+def pure [LApplicative e f] : Lexp e (α ⟶ f α) :=
+  LApplicative.pure
 
 def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
   [laydown|
@@ -367,6 +403,26 @@ def fromOption : Lexp e (α ⟶ option α ⟶ α) :=
       Mk(none) => defVal
     }
   ]
+
+instance : LFunctor e option where
+  map := [laydown|
+    λ f x => match x with {
+      Mk(some, v) => Mk(some, f v),
+      Mk(none) => Mk(none)
+    }
+  ]
+
+instance : LFunctor e .effect where
+  map := [laydown|
+    λ f x => !(Lexp.bindEffect) x (λ v => !(Lexp.pureEffect) (f v))
+  ]
+
+instance : LApplicative e .effect where
+  pure := Lexp.pureEffect
+  seq := Lexp.seqEffect
+
+instance : LMonad e .effect where
+  bind := Lexp.bindEffect
 
 instance [c : HasFieldClass fs n α] : Has n (Ltype.record fs) α where
   get := Lexp.lambda "x" (Lexp.recordGet n (Lexp.var "x" (.here)) c.hasField)
@@ -393,3 +449,9 @@ def some : Lexp e (α ⟶ option α) :=
 
 instance [s : SubEnv a b] : SubEnv a (more ++ b) where
   adaptVar x := adaptVarAppend (s.adaptVar x)
+
+def mkSingletonRec (name : String) : Lexp e (α ⟶ .record [(name, α)]) :=
+  [laydown| λ x => !(Lexp.recordcons name (Lexp.var "x" (HasGenVar.here)) Lexp.recordnil)]
+
+def mkRecordGet (name : String) (p : HasField xs name α) : Lexp e (.record xs ⟶ α) :=
+  [laydown| λ x => !(Lexp.recordGet name (Lexp.var "x" (HasGenVar.here)) p)]
