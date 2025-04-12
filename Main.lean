@@ -93,26 +93,37 @@ def chat [SubEnv ui e]: Lexp e ((serviceGroup ["userMessage", "getMessages"] ser
       }
   ]
 
+def loginPage [SubEnv ui e] : Lexp e (flux (.record [("user", .string), ("password", .string)])) :=
+  [laydown|
+    [formF|
+      "user" :: ___
+      "password" :: *___
+      s["login"]
+    ]
+  ]
+
 def app := #rapp [server] {
-    [laydown|
-      do {
-        let mainPage ← !createSignal [ui| connecting to ws],
-        connect
-          Mk(user, {user := "admin", password := "123"})
-          (match{
-            Mk (fail, error) => mainPage~set [ui| login fail ],
-            Mk (guest, api) => mainPage~set [ui| guest ],
-            Mk (user, api) => mainPage~set (!chat api~(userMessage, getMessages)),
-            Mk (admin, api) => mainPage~set (!chat api~(userMessage, getMessages))
-          }),
-        [ui| {mainPage~signal}]
-      }
+    [laydown| do{
+      let disp ← !createSignal [ui| {""}],
+      let flx  := do{
+        let l ← !loginPage,
+        let api ← !lift (connect (Mk(user, l))),
+        match api with{
+          Mk (fail, error) => !terminal [ui| login fail ],
+          Mk (guest, api) => !terminal [ui| guest ],
+          Mk (user, api) => !terminal (!chat api),
+          Mk (admin, api) => !terminal (!chat api)
+        }
+      },
+      !startFlux disp~set flx,
+      [ui| {disp~signal}]
+    }
     ]
 }
 
 
 #eval genApp app
---#eval deployApp "localhost" 6401 app
+#eval deployApp "caaty_def.json" "localhost" 6401 app
 
 --def main : IO Unit :=
 --  IO.println s!"Hello, !"

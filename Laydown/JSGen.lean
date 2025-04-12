@@ -22,6 +22,8 @@ def jsRuntime : String :=
     const eq = a => b => a === b;
     const tupleCons = a => b => b.unshift(a);
     const listMap = f => xs => xs.map(f);
+
+    let ctxt = Immutable.Map();
   "
 
 def escapeString (s : String) : String :=
@@ -37,13 +39,13 @@ def jsGen : Lexp e α → String
   | Lexp.litInt n => toString n
   | Lexp.litBool b => toString b
   | Lexp.litFloat f => toString f
-  | Lexp.var n _ => n
-  | Lexp.parametricVar n _ _ => n
-  | Lexp.parametric2Var n _ _ _ => n
+  | Lexp.var n _ =>s!"ctxt.get({escapeString n})"
+  | Lexp.parametricVar n _ _ => s!"ctxt.get({escapeString n})"
+  | Lexp.parametric2Var n _ _ _ => s!"ctxt.get({escapeString n})"
   | Lexp.app f a =>  jsGen f ++ "(" ++ jsGen a ++ ")"
-  | Lexp.lambda n b =>  "(" ++ n ++ " => " ++ jsGen b ++ ")"
+  | Lexp.lambda n b => s!"(arg => (ctxt => {jsGen b})(ctxt.set({escapeString n}, arg)))"
   | Lexp.lambdaConst b =>  "(() => " ++ jsGen b ++ ")"
-  | Lexp.llet n v b =>  "((" ++ n ++ " => " ++ jsGen b ++ ")(" ++ jsGen v ++ "))"
+  | Lexp.llet n v b =>  s!"(ctxt => {jsGen b})(ctxt.set({escapeString n}, {jsGen v}))"
   | Lexp.pureEffect => "pureEffect"
   | Lexp.bindEffect => "bindEffect"
   | Lexp.seqEffect => "seqEffect"
@@ -59,17 +61,19 @@ def jsGen : Lexp e α → String
   | Lexp.boolOr => "or"
   | Lexp.boolNot => "not"
   | Lexp.boolEq => "eq"
-  | Lexp.mk n v _ => "Immutable.Map({" ++ n ++ ": " ++ jsGen v ++ "})"
+  | Lexp.mk n v _ => "(Immutable.Map().set(" ++ escapeString n ++ ", " ++ jsGen v ++ "))"
   | Lexp.switchbase n v b =>
     let n_ := escapeString n
-    s!"(x => ({v} => {jsGen b})(x.get({n_})))"
+    let v_ := escapeString v
+    s!"(x => (  ctxt => {jsGen b})( ctxt.set({v_}, x.get({n_}))  ))"
   | Lexp.switchcons n v b c =>
       let n_ := escapeString n
-      s!"(x => x.has({n_}) ? ({v} => {jsGen b})(x.get({n_})) : {jsGen c}(x))"
+      let v_ := escapeString v
+      s!"(x => x.has({n_}) ? (ctxt => {jsGen b})(ctxt.set({v_}, x.get({n_}))) : {jsGen c}(x))"
   | Lexp.tupleBase => "Immutable.List()"
   | Lexp.tupleCons => "tupleCons"
   | Lexp.recordnil => "Immutable.Map()"
-  | Lexp.recordcons n v r => s!"{jsGen r}.set({escapeString n}, {jsGen v})"
+  | Lexp.recordcons n v r => s!"({jsGen r}.set({escapeString n}, {jsGen v}))"
   | Lexp.subrecord names r =>
       let names_ := String.intercalate "," (names.map escapeString)
       s!"{jsGen r}.filter((v,k) => [{names_}].includes(k))"

@@ -164,7 +164,7 @@ abbrev login : Ltype := .sum [
 abbrev serverConnection (roles : List String) (services : List ServiceTy) : Env :=
   let rolesServs := roles.map (λ x => (x, roleApi_ x services))
   let servs := ("fail", .record [("error", .string)]) :: ("guest", roleApi_ "guest" services) :: rolesServs
-  [("connect", .base (login ⟶ (.sum servs ⟶ .effect unit) ⟶ .effect unit))]
+  [("connect", .base (login ⟶ .effect (.sum servs)))]
 
 inductive RethinkApp : Type where
   | mk : Server r σ γ → Lexp (serverConnection r γ ++ ui) (.effect .ui) → RethinkApp
@@ -173,11 +173,12 @@ macro "#rapp" "[" s:term "]" "{" n:term "}" : term => `(RethinkApp.mk $s $n)
 
 
 structure RethinkGeneratedApp where
+  id : String
   server : String
-  client : String
+  page : String
   migrations : List String
   tables : String
-deriving Repr
+deriving Repr, ToJson
 
 
 def getServerSchema (server : Server roles sch srvs) : SchemaDef sch :=
@@ -258,7 +259,7 @@ def genClientServices : (app : RethinkApp) → String
 
 
 def genServerApi (app : RethinkApp) : String :=
-  "const connect = login => cb => r => {\n
+  "ctxt = ctxt.set('connect', login => r => {\n
     const ws = new WebSocket('/appcom/"++ appName app ++"');
     const message_call_backs = {};
     let lastReqId = 0;
@@ -270,9 +271,9 @@ def genServerApi (app : RethinkApp) : String :=
         if(data.hasOwnProperty('role')){
           role = data.role;
           const api = servs.get(role);
-          cb(Immutable.Map().set(role, api))(x => x);
+          r(Immutable.Map().set(role, api));
         }else{
-          cb(Immutable.Map().set('fail', data.error))(x => x);
+          r(Immutable.Map().set('fail', data.error));
         }
       }else{
         const i = data.reqId;
@@ -282,8 +283,7 @@ def genServerApi (app : RethinkApp) : String :=
     ws.onopen = event =>{
       ws.send(JSON.stringify(login));
     }
-    r(x=>x)
-  }
+  })
   "
 
 def genTables (_ : Server roles sch srvs) : String :=
@@ -294,34 +294,34 @@ def genApp (app : RethinkApp) : RethinkGeneratedApp :=
     | .mk server page =>
         let migs := genMigrations server
         let client := browserTemplate (genServerApi app) (jsGen page)
-        { server := (genServices server) |> toJson |> pretty
-        , client := client
+        { id := appName app
+        , server := (genServices server) |> toJson |> pretty
+        , page := client
         , migrations := migs
         , tables := genTables server
         }
 
 
-def escapeforRun (s : String) : String :=
-  s.replace "\\\"" "\\\\\""
-
-def deployApp (host : String) (port : Nat) (app : RethinkApp) : IO Unit :=
+def deployApp (localpath : String) (host : String) (port : Nat) (app : RethinkApp) : IO Unit :=
   do
     let a := genApp app
-    let name_ := escapeString (appName app) |> escapeforRun
+/-    let name_ := escapeString (appName app) |> escapeforRun
     let server_ := escapeString a.server |> escapeforRun
     let tables_ := escapeString a.tables |> escapeforRun
     let client_ := escapeString a.client |> escapeforRun
     let migrations_ := "[" ++ String.intercalate "," (a.migrations.map (λ x => escapeString x |> escapeforRun)) ++ "]"
     let payload := "{" ++
                     s!"\"id\" : {name_}, \"server\" : {server_},\"page\" : {client_}, \"migrations\" : {migrations_}, \"tables\": {tables_}" ++
-                    "}"
+                    "}"-/
+
+    IO.FS.writeFile localpath (a |> toJson |> toString)
     let url := s!"http://{host}:{toString port}/upsertapp"
     let output ← IO.Process.run {
       cmd := "curl.exe",
       args:= #[ "-X", "POST"
               , "-H", "accept: application/json"
               , "-H", "Content-Type: application/json"
-              ,"-d", payload
+              ,"-d", "@" ++ localpath
               , url
               ]
     }

@@ -6,13 +6,15 @@ abbrev changes (α : Ltype) : Ltype := .sum [
   ("updated", .record [("new", α),("old", α)]),
 ]
 
-abbrev createSignalTy := λ α =>
-  α ⟶ .effect (.record [
+abbrev signalAndSetter (α : Ltype) : Ltype := .record [
     ("set", α ⟶ .effect unit),
     ("update", (α ⟶ α) ⟶ .effect unit),
     ("signal", .signal α),
     ("get", .effect α)
-  ])
+]
+
+abbrev createSignalTy := λ α =>
+  α ⟶ .effect (signalAndSetter α)
 
 
 abbrev formSubmitContext : Ltype := .record [
@@ -28,12 +30,18 @@ abbrev ui : Env := [
   ("displayList", .base (.list (.effect .ui) ⟶ .effect .ui)),
   ("createSignal", .parametric createSignalTy),
   ("mapSignal", .parametric2 (λ α β => ((α ⟶ β) ⟶ .signal α ⟶ .signal β))),
+  ("pureSignal", .parametric (λ α => α ⟶ .signal α)),
+  ("seqSignal", .parametric2 (λ α β => .signal (α ⟶ β) ⟶  (unit ⟶ .signal α) ⟶ .signal β)),
+  ("subscribeSignal", .parametric (λ α => .signal α ⟶ (α ⟶ .effect unit) ⟶ .effect unit)),
   ("currentValue", .parametric (λ α => .signal α ⟶ .effect α)),
   ("br", .base (.effect .ui)),
   ("textInput", .base (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui)),
+  ("passwordInput", .base (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui)),
   ("streamChangesUI", .parametric2 (λ α β => .stream (changes α) ⟶ (α ⟶ .effect .ui) ⟶ (α ⟶ β) ⟶ .effect .ui)),
   ("form", .base ((formSubmitContext ⟶ .effect unit) ⟶ .effect .ui ⟶ .effect .ui)),
   ("withLabel", .base (.effect .ui ⟶ .effect .ui ⟶ .effect .ui)),
+  ("consoleLog", .parametric (λ α => α ⟶ .effect unit)),
+  ("submitButton", .base (.effect .ui ⟶ .effect .ui))
 ]
 
 
@@ -73,6 +81,26 @@ def mapSignal [se : SubEnv ui e] : Lexp e ((α ⟶ β) ⟶ .signal α ⟶ .signa
             by repeat constructor
   Lexp.parametric2Var "mapSignal" α  β (se.adaptVar p)
 
+def pureSignal [se : SubEnv ui e] : Lexp e (α ⟶ .signal α) :=
+  let p : HasGenVar ui "pureSignal"
+    (.parametric (λ α => α ⟶ .signal α)) :=
+            by repeat constructor
+  Lexp.parametricVar "pureSignal" α (se.adaptVar p)
+
+def seqSignal [se : SubEnv ui e] :
+  Lexp e (.signal (α ⟶ β) ⟶ (unit ⟶ .signal α) ⟶ .signal β) :=
+  let p : HasGenVar ui "seqSignal"
+    (.parametric2 (λ α β => .signal (α ⟶ β) ⟶ (unit ⟶ .signal α) ⟶ .signal β)) :=
+            by repeat constructor
+  Lexp.parametric2Var "seqSignal" α β (se.adaptVar p)
+
+def subscribeSignal [se : SubEnv ui e] :
+  Lexp e (.signal α ⟶ (α ⟶ .effect unit) ⟶ .effect unit) :=
+  let p : HasGenVar ui "subscribeSignal"
+    (.parametric (λ α => .signal α ⟶ (α ⟶ .effect unit) ⟶ .effect unit)) :=
+            by repeat constructor
+  Lexp.parametricVar "subscribeSignal" α (se.adaptVar p)
+
 def currentValue [se : SubEnv ui e] :
   Lexp e (.signal α ⟶ .effect α) :=
   let p : HasGenVar ui "currentValue"
@@ -93,6 +121,10 @@ def textInput [se : SubEnv ui e] : Lexp e (.string ⟶ (.string ⟶ .effect unit
   let p : HasVar ui "textInput" (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui) := by repeat constructor
   Lexp.var "textInput" (se.adaptVar p)
 
+def passwordInput [se : SubEnv ui e] : Lexp e (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui) :=
+  let p : HasVar ui "passwordInput" (.string ⟶ (.string ⟶ .effect unit) ⟶ .effect .ui) := by repeat constructor
+  Lexp.var "passwordInput" (se.adaptVar p)
+
 def streamChangesUI [se : SubEnv ui e] :
   Lexp e (.stream (changes α) ⟶ (α ⟶ .effect .ui) ⟶ (α ⟶  β) ⟶ .effect .ui) :=
   let p : HasGenVar ui "streamChangesUI"
@@ -110,6 +142,15 @@ def withLabel [se : SubEnv ui e] :
   let p : HasVar ui "withLabel" (.effect .ui ⟶ .effect .ui ⟶ .effect .ui) := by repeat constructor
   Lexp.var "withLabel" (se.adaptVar p)
 
+def consoleLog [se : SubEnv ui e] :
+  Lexp e (α ⟶ .effect unit) :=
+  let p : HasGenVar ui "consoleLog" (.parametric (λ α => α ⟶ .effect unit)) := by repeat constructor
+  Lexp.parametricVar "consoleLog" α (se.adaptVar p)
+
+def submitButton [se : SubEnv ui e] :
+  Lexp e (.effect .ui ⟶ .effect .ui) :=
+  let p : HasVar ui "submitButton" (.effect .ui ⟶ .effect .ui) := by repeat constructor
+  Lexp.var "submitButton" (se.adaptVar p)
 
 class LDisplay (α : Ltype) where
   display [SubEnv ui e] : Lexp e (α ⟶ .effect .ui)
@@ -145,8 +186,11 @@ declare_syntax_cat ui
 
 syntax "[ui| " ui "]" : laydown
 syntax ":" : ui
+syntax "..." : ui
 syntax "___(" laydown ")" : ui
 syntax "__" laydown "__(" laydown ")" : ui
+syntax "*___(" laydown ")" : ui
+syntax "*__" laydown "__(" laydown ")" : ui
 syntax ident : ui
 syntax ui ui : ui
 syntax "{ " laydown " }" : ui
@@ -161,10 +205,16 @@ syntax ui "::" ui : ui
 macro_rules
   | `([laydown| [ui| :]]) =>
       `(Lexp.app text (Lexp.litStr ": "))
+  | `([laydown| [ui| ...]]) =>
+      `(Lexp.app text (Lexp.litStr "..."))
   | `([laydown| [ui| ___($c) ]]) =>
       `([laydown| !textInput "" $c])
   | `([laydown| [ui| __ $v __($c) ]]) =>
       `([laydown| !textInput $v $c])
+  | `([laydown| [ui| *___($c) ]]) =>
+      `([laydown| !passwordInput "" $c])
+  | `([laydown| [ui| *__ $v __($c) ]]) =>
+      `([laydown| !passwordInput $v $c])
   | `([laydown| [ui| $txt:ident ]]) =>
       `( Lexp.app
           text
@@ -198,5 +248,42 @@ instance [SubEnv ui e] : LFunctor e .signal where
   map := [laydown| λ f x =>  !mapSignal f x]
 
 instance [SubEnv ui e] : LApplicative e .signal where
-  pure := sorry
-  seq := sorry
+  pure := pureSignal
+  seq := seqSignal
+
+abbrev render : Ltype := .effect .ui ⟶ .effect unit
+
+abbrev flux (α : Ltype) : Ltype :=
+  (α ⟶ render ⟶ .effect unit) ⟶ render ⟶ .effect unit
+
+instance [SubEnv ui e] : LFunctor e flux where
+  map := [laydown| λ f x =>
+    λ cb render => x (λ z r => cb (f z) r) render
+  ]
+
+instance [SubEnv ui e] : LApplicative e flux where
+  pure := [laydown| λ x => λ cb render => cb x render]
+  seq := [laydown| λ appf x =>
+    λ cb render => appf (λ f' r => x () (λ x' r => cb (f' x') r) r) render
+  ]
+
+instance [SubEnv ui e] : LMonad e flux where
+  bind := [laydown| λ x mff =>
+    λ cb render => x (λ x' r => mff x' cb render) render
+  ]
+
+def lift [SubEnv ui e]: Lexp e (.effect α ⟶ flux α) :=
+  [laydown| λ x => λ cb render => do {
+    let r ← x,
+    cb r render
+  }]
+
+def startFlux [SubEnv ui e] : Lexp e (render ⟶ flux empty ⟶ .effect unit) :=
+  [laydown| λ r x =>
+    x (λ x y => !pure ()) r
+  ]
+
+def terminal [SubEnv ui e] : Lexp e (.effect .ui ⟶ flux empty) :=
+  [laydown| λ x =>
+    λ cb render => render x
+  ]

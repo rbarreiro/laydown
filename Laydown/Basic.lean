@@ -43,6 +43,8 @@ infixr:10   " ⟶ " => Ltype.func
 
 abbrev unit := Ltype.tuple []
 
+abbrev empty := Ltype.sum []
+
 def option (α : Ltype) : Ltype := .sum [("some", α), ("none", unit)]
 
 abbrev Fields := List (String × Ltype)
@@ -251,8 +253,8 @@ syntax "(" tuple_item* laydown "," laydown ")" : laydown
 syntax "[" laydown,* "]" : laydown
 syntax "{" key_value,* "}" : laydown
 syntax ident ":=" laydown : key_value
-syntax laydown "<$>" laydown : laydown
-syntax laydown "<*>" laydown : laydown
+syntax:40 laydown:40 "<$>" laydown:41 : laydown
+syntax:30 laydown:30 "<*>" laydown:31 : laydown
 syntax "False" : laydown
 syntax "True" : laydown
 syntax "let" ident ":=" laydown "in" laydown : laydown
@@ -419,6 +421,18 @@ instance : LFunctor e option where
     }
   ]
 
+instance : LApplicative e option where
+  pure := [laydown| λ x => Mk(some, x)]
+  seq := [laydown|
+    λ oaf x => match oaf with {
+      Mk(some, f_) => match x () with {
+        Mk(some, v) => Mk(some, f_ v),
+        Mk(none) => Mk(none)
+      },
+      Mk(none) => Mk(none)
+    }
+  ]
+
 instance : LFunctor e .effect where
   map := [laydown|
     λ f x => !(Lexp.bindEffect) x (λ v => !(Lexp.pureEffect) (f v))
@@ -462,3 +476,6 @@ def mkSingletonRec (name : String) : Lexp e (α ⟶ .record [(name, α)]) :=
 
 def mkRecordGet (name : String) (p : HasField xs name α) : Lexp e (.record xs ⟶ α) :=
   [laydown| λ x => !(Lexp.recordGet name (Lexp.var "x" (HasGenVar.here)) p)]
+
+def addField (name : String) : Lexp e (α ⟶ .record xs ⟶ .record ((name, α) :: xs)) :=
+  [laydown| λ x xs => !(Lexp.recordcons name (Lexp.var "x" (.there .here)) (Lexp.var "xs" (.here)))]
